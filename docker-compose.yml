@@ -1,0 +1,263 @@
+version: "3.9"
+
+x-seaweed-env: &seaweed-env
+  WEED_MASTER: "seaweedfs-master:9333"
+  WEED_FILER: "seaweedfs-filer:8888"
+  WEED_S3: "http://seaweedfs-s3:8333"
+  S3_ACCESS_KEY: "cloudreport"
+  S3_SECRET_KEY: "cloudreport123"
+  S3_REGION: "us-east-1"
+  S3_BUCKET: "cloudreport"
+
+x-redis-env: &redis-env
+  REDIS_URL: "redis://redis:6379/0"
+
+services:
+
+  # ---------- DATA STORES ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: cr-postgres
+    environment:
+      POSTGRES_DB: cloudreport
+      POSTGRES_USER: cloudreport
+      POSTGRES_PASSWORD: cloudreport
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloudreport"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: cr-redis
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  # ---------- SEAWEEDFS (master + volume + filer + s3) ----------
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: cr-seaweed-master
+    command: "master -ip=seaweedfs-master -mdir=/data"
+    ports:
+      - "9333:9333"
+    volumes:
+      - seaweed-master:/data
+
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: cr-seaweed-volume
+    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -dir=/data -max=10"
+    depends_on:
+      - seaweedfs-master
+    ports:
+      - "8080:8080"
+    volumes:
+      - seaweed-volume:/data
+
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: cr-seaweed-filer
+    command: "filer -master=seaweedfs-master:9333 -ip=seaweedfs-filer"
+    depends_on:
+      - seaweedfs-master
+      - seaweedfs-volume
+    ports:
+      - "8888:8888"
+
+  seaweedfs-s3:
+    image: chrislusf/seaweedfs:latest
+    container_name: cr-seaweed-s3
+    command: "s3 -filer=seaweedfs-filer:8888 -ip.bind=0.0.0.0 -port=8333 -config=/etc/seaweed/s3.json"
+    depends_on:
+      - seaweedfs-filer
+    ports:
+      - "8333:8333"
+    volumes:
+      - ./infra/seaweed/s3.json:/etc/seaweed/s3.json:ro
+
+  # ---------- GO API ----------
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: cr-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      seaweedfs-s3:
+        condition: service_started
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      DATABASE_URL: "postgres://cloudreport:cloudreport@postgres:5432/cloudreport?sslmode=disable"
+      HTTP_PORT: "5488"
+      # ── Security / session — override these in a .env file per install ──
+      JWT_SECRET: "${JWT_SECRET:-change-me-in-prod}"
+      SESSION_TTL_HOURS: "${SESSION_TTL_HOURS:-720}"   # 720h = 30 días
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      ALLOW_REGISTRATION: "${ALLOW_REGISTRATION:-true}"
+      # ── Initial admin — created on first boot of a fresh database ──
+      INITIAL_ADMIN_USERNAME: "${INITIAL_ADMIN_USERNAME:-admin}"
+      INITIAL_ADMIN_PASSWORD: "${INITIAL_ADMIN_PASSWORD:-admin123}"
+      INITIAL_ADMIN_EMAIL:    "${INITIAL_ADMIN_EMAIL:-admin@cloudreport.local}"
+    # No host ports — the API is reached only through the Caddy reverse proxy
+    # (https://<host>/api, /odata, …). Uncomment to expose directly for debug.
+    # ports:
+    #   - "5488:5488"
+
+  # ---------- FRONTEND (Nuxt) ----------
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+      args:
+        # Behind Caddy the browser uses relative URLs (/api, /odata…) on the
+        # same origin, so the baked base is EMPTY. For a direct (no-proxy)
+        # deploy, set NUXT_PUBLIC_API_BASE to the API's absolute browser URL.
+        NUXT_PUBLIC_API_BASE: "${NUXT_PUBLIC_API_BASE-}"
+    container_name: cr-ui
+    depends_on:
+      - api
+    environment:
+      # Empty = relative (same-origin via Caddy). Kept in sync with the build arg.
+      NUXT_PUBLIC_API_BASE: "${NUXT_PUBLIC_API_BASE-}"
+      NITRO_PORT: "3030"
+      NITRO_HOST: "0.0.0.0"
+    # No host ports — served through Caddy on :443.
+    # ports:
+    #   - "3030:3030"
+
+  # ---------- PYTHON WORKERS ----------
+  chromium-worker:
+    build:
+      context: ./workers
+      dockerfile: chromium/Dockerfile
+    container_name: cr-chromium
+    depends_on:
+      - redis
+      - seaweedfs-s3
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      WORKER_STREAM: "renders:chrome-pdf"
+      WORKER_GROUP: "chromium-workers"
+    # Chromium needs some memory headroom for heavy pages.
+    shm_size: "1gb"
+
+  weasyprint-worker:
+    build:
+      context: ./workers
+      dockerfile: weasyprint/Dockerfile
+    container_name: cr-weasyprint
+    depends_on:
+      - redis
+      - seaweedfs-s3
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      WORKER_STREAM: "renders:weasyprint"
+      WORKER_GROUP: "weasyprint-workers"
+
+  docx-worker:
+    build:
+      context: ./workers
+      dockerfile: docx/Dockerfile
+    container_name: cr-docx
+    depends_on:
+      - redis
+      - seaweedfs-s3
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      WORKER_STREAM: "renders:docx"
+      WORKER_GROUP: "docx-workers"
+
+  pptx-worker:
+    build:
+      context: ./workers
+      dockerfile: pptx/Dockerfile
+    container_name: cr-pptx
+    depends_on:
+      - redis
+      - seaweedfs-s3
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      WORKER_STREAM: "renders:pptx"
+      WORKER_GROUP: "pptx-workers"
+
+  html-to-xlsx-worker:
+    build:
+      context: ./workers
+      dockerfile: html-to-xlsx/Dockerfile
+    container_name: cr-html-to-xlsx
+    depends_on:
+      - redis
+      - seaweedfs-s3
+    environment:
+      <<: [*seaweed-env, *redis-env]
+      WORKER_STREAM: "renders:html-to-xlsx"
+      WORKER_GROUP: "html-to-xlsx-workers"
+
+  # ---------- REVERSE PROXY (Caddy, HTTPS) ----------
+  # The only service that publishes ports to the host. Fronts the frontend,
+  # backend, n8n and the SeaweedFS UIs with automatic internal TLS.
+  caddy:
+    image: caddy:2-alpine
+    container_name: cr-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - ui
+    environment:
+      # Basic-auth credentials for the SeaweedFS admin UIs (:9080 / :9081).
+      # Generate the hash with:  docker run --rm caddy:2-alpine caddy hash-password --plaintext 'tu-pass'
+      SEAWEEDFS_UI_USER: "${SEAWEEDFS_UI_USER:-admin}"
+      SEAWEEDFS_UI_PASSWORD_HASH: "${SEAWEEDFS_UI_PASSWORD_HASH:-$$2a$$14$$OXnYcKcg5DCeCm6vmmkPP.1SW/nOx4GCmqS.g52W359v.7hju66Cu}"
+    # Alternate host ports — this host already runs another Caddy on 80/443.
+    # On a dedicated server change these back to "80:80" / "443:443" and add
+    # the :80 redirect. Access: https://<host>:8443
+    ports:
+      - "${CADDY_HTTPS_PORT:-8443}:443"
+      - "${N8N_HOST_PORT:-5678}:5678"        # n8n
+      - "${SEAWEEDFS_FILER_UI_PORT:-19080}:9080"   # SeaweedFS filer UI
+      - "${SEAWEEDFS_MASTER_UI_PORT:-19081}:9081"  # SeaweedFS master UI
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+
+  # ---------- AUTOMATION (n8n, latest) ----------
+  # cloud-report is meant to pair with n8n for workflow automation (e.g. fire
+  # a render from a workflow). Reached at https://<host>:5678 via Caddy.
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cr-n8n
+    restart: unless-stopped
+    environment:
+      # n8n sits behind Caddy on a dedicated TLS vhost.
+      N8N_HOST: "${N8N_HOST:-10.71.1.125}"
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: "https"
+      N8N_SECURE_COOKIE: "false"          # internal TLS cert — relax the secure-cookie strictness
+      WEBHOOK_URL: "${N8N_WEBHOOK_URL:-https://10.71.1.125:5678/}"
+      N8N_TRUST_PROXY: "true"
+      GENERIC_TIMEZONE: "${N8N_TZ:-America/La_Paz}"
+      N8N_RUNNERS_ENABLED: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  pgdata:
+  seaweed-master:
+  seaweed-volume:
+  caddy_data:
+  caddy_config:
+  caddy_logs:
+  n8n_data:

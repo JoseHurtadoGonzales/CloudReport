@@ -1,0 +1,6 @@
+weasyprint==60.2
+cssselect2==0.7.0
+tinycss2==1.2.1
+pydyf==0.10.0
+redis==5.0.7
+boto3==1.34.144

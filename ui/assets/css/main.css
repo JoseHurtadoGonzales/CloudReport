@@ -1,0 +1,427 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* ─────────────────────────────────────────────────────────────────────
+   Wise-inspired tokens (from DESIGN.md) — exposed via Tailwind v4 @theme
+   ───────────────────────────────────────────────────────────────────── */
+
+@theme static {
+  /* Brand (lime) — full 50-950 scale derived from Wise's #9fe870 */
+  --color-wise-50:  #f3fbe9;
+  --color-wise-100: #e2f6d5;
+  --color-wise-200: #cdffad;
+  --color-wise-300: #c5edab;
+  --color-wise-400: #9fe870;
+  --color-wise-500: #7dcf4d;
+  --color-wise-600: #5fb22d;
+  --color-wise-700: #4a9722;
+  --color-wise-800: #2d6515;
+  --color-wise-900: #163300;
+  --color-wise-950: #0b1c00;
+
+  /* Semantic surface tokens (referenced from utilities) */
+  --color-canvas-soft: #e8ebe6;
+  --color-ink: #0e0f0c;
+  --color-ink-deep: #163300;
+  --color-body-text: #454745;
+  --color-mute: #868685;
+  --color-positive: #2ead4b;
+  --color-positive-deep: #054d28;
+
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --radius-pill: 9999px;
+
+  --shadow-soft: 0 1px 2px rgb(14 15 12 / 0.04), 0 4px 16px rgb(14 15 12 / 0.06);
+  --shadow-lift: 0 10px 40px rgb(14 15 12 / 0.10), 0 2px 6px rgb(14 15 12 / 0.04);
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Map Nuxt UI semantic color slots → Wise.
+   Light mode = default, dark mode = `.dark` class on <html> (set by Nuxt UI's
+   color-mode plugin / our toggle).
+   ───────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* Light mode app surface palette */
+  --cr-app-bg:        #f6f8f4;          /* page background */
+  --cr-surface:       #ffffff;          /* cards */
+  --cr-surface-soft:  #f1f3ef;          /* subtle stripe */
+  --cr-border:        rgb(14 15 12 / 0.10);
+  --cr-border-strong: rgb(14 15 12 / 0.16);
+  --cr-text:          #0e0f0c;
+  --cr-text-muted:    #5f6361;
+  --cr-text-soft:     #868685;
+
+  /* Brand primary in semantic slots */
+  --ui-color-primary-50:  var(--color-wise-50);
+  --ui-color-primary-100: var(--color-wise-100);
+  --ui-color-primary-200: var(--color-wise-200);
+  --ui-color-primary-300: var(--color-wise-300);
+  --ui-color-primary-400: var(--color-wise-400);
+  --ui-color-primary-500: var(--color-wise-400); /* anchor 500 to Wise green */
+  --ui-color-primary-600: var(--color-wise-500);
+  --ui-color-primary-700: var(--color-wise-700);
+  --ui-color-primary-800: var(--color-wise-800);
+  --ui-color-primary-900: var(--color-wise-900);
+  --ui-color-primary-950: var(--color-wise-950);
+}
+
+html.dark {
+  /* Dark mode (inspired by Wise dark: very near-black canvas + lime accent) */
+  --cr-app-bg:        #0b0d0a;
+  --cr-surface:       #15181412;        /* placeholder; real card uses #161A14 via class */
+  --cr-surface:       #161A14;
+  --cr-surface-soft:  #1d2218;
+  --cr-border:        rgb(255 255 255 / 0.08);
+  --cr-border-strong: rgb(255 255 255 / 0.14);
+  --cr-text:          #f4f6f1;
+  --cr-text-muted:    #aab1a7;
+  --cr-text-soft:     #7d8478;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Base
+   ───────────────────────────────────────────────────────────────────── */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  color-scheme: light;
+}
+html.dark { color-scheme: dark; }
+
+body {
+  font-family: var(--font-sans);
+  background: var(--cr-app-bg);
+  color: var(--cr-text);
+  transition: background-color 250ms cubic-bezier(0.22, 1, 0.36, 1),
+              color 250ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Disable transitions during theme switches (ui-animation rule) */
+html[data-theme-switching] *,
+html[data-theme-switching] *::before,
+html[data-theme-switching] *::after {
+  transition: none !important;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Keyboard focus rings — Wise lime halo */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgb(159 232 112 / 0.55);
+  border-radius: 8px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Bespoke component utilities (referenced from Vue files)
+   ───────────────────────────────────────────────────────────────────── */
+
+@layer components {
+  /* Surface card — same look light/dark */
+  .cr-card {
+    background: var(--cr-surface);
+    color: var(--cr-text);
+    border: 1px solid var(--cr-border);
+    border-radius: 28px;
+    box-shadow: var(--shadow-lift);
+  }
+
+  /* Hand-rolled input. Replaces UInput so we get total control over both modes. */
+  .cr-input {
+    width: 100%;
+    background: var(--cr-surface);
+    color: var(--cr-text);
+    border: 1px solid var(--cr-border);
+    border-radius: 14px;
+    padding: 14px 16px 14px 44px;
+    font-size: 15px;
+    line-height: 24px;
+    transition:
+      border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+      background-color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .cr-input::placeholder { color: var(--cr-text-soft); }
+  .cr-input:hover { border-color: var(--cr-border-strong); }
+  .cr-input:focus,
+  .cr-input:focus-visible {
+    outline: none;
+    border-color: var(--color-wise-500);
+    /* Thinner ring (2px) keeps focus visible without looking like a thick
+       "selected" border — the 4px ring was overwhelming on dropdowns. */
+    box-shadow: 0 0 0 2px rgb(159 232 112 / 0.22);
+  }
+  .cr-input--invalid {
+    border-color: #d03238;
+    box-shadow: 0 0 0 2px rgb(208 50 56 / 0.18);
+  }
+
+  /* Native <select> when it borrows .cr-input: kill the OS chevron and draw
+     our own so it matches the rest of the form across themes. */
+  select.cr-input {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    padding-right: 40px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2378808a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    background-size: 14px 14px;
+  }
+  html.dark select.cr-input {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a8b0ba' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  }
+  select.cr-input:hover { background-color: var(--cr-surface-soft); }
+  /* Options dropdown — limited cross-browser styling but we set what we can
+     so the panel doesn't look like a 1998 native widget. */
+  select.cr-input option {
+    background: var(--cr-surface);
+    color: var(--cr-text);
+    padding: 8px;
+  }
+
+  .cr-input-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--cr-text-soft);
+    pointer-events: none;
+  }
+
+  .cr-input-affix {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--cr-text-soft);
+    padding: 8px;
+    border-radius: 8px;
+    transition: color 150ms, background-color 150ms;
+  }
+  .cr-input-affix:hover {
+    color: var(--cr-text);
+    background: var(--cr-surface-soft);
+  }
+
+  .cr-label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--cr-text-muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.01em;
+  }
+
+  .cr-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .cr-checkbox {
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 6px;
+    border: 1.5px solid var(--cr-border-strong);
+    background: var(--cr-surface);
+    transition: background-color 150ms, border-color 150ms;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .cr-checkbox:hover { border-color: var(--color-wise-500); }
+  .cr-checkbox:checked {
+    background: var(--color-wise-400);
+    border-color: var(--color-wise-500);
+  }
+  .cr-checkbox:checked::after {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 1px;
+    width: 5px;
+    height: 10px;
+    border: solid #0e0f0c;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  /* Primary submit button — Wise lime on near-black text.
+     Emil: targeted transitions (transform + bg + shadow), strong ease-out
+     curve, scale(0.97) on active gives instant tactile feedback. */
+  .cr-btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--color-wise-400);
+    color: #0e0f0c;
+    font-weight: 600;
+    font-size: 15px;
+    padding: 14px 24px;
+    border-radius: 14px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    overflow: hidden;
+    transition:
+      transform 140ms cubic-bezier(0.23, 1, 0.32, 1),
+      background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+      box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .cr-btn-primary:hover {
+    background: #b7f283;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgb(159 232 112 / 0.45);
+  }
+  .cr-btn-primary:active { transform: translateY(0) scale(0.97); }
+  .cr-btn-primary:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+
+  /* Production status badge — readable contrast in both modes (WCAG AA) */
+  .cr-badge-prod {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    background: rgb(45 101 21 / 0.10);        /* wise-800 @ 10% */
+    color: #054d28;                            /* positive-deep on light */
+    border: 1px solid rgb(45 101 21 / 0.18);
+  }
+  html.dark .cr-badge-prod {
+    background: rgb(159 232 112 / 0.14);       /* wise-400 @ 14% on dark */
+    color: #cdffad;                            /* primary-active — bright lime */
+    border-color: rgb(159 232 112 / 0.28);
+  }
+  .cr-badge-prod-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: #2ead4b;                       /* positive */
+    box-shadow: 0 0 0 0 rgb(46 173 75 / 0.55);
+  }
+  html.dark .cr-badge-prod-dot {
+    background: #9fe870;                       /* wise-400 — pops on dark */
+  }
+
+  /* Pill icon button (theme toggle). Strong curve, tighter timing. */
+  .cr-icon-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 9999px;
+    border: 1.5px solid var(--cr-border-strong);
+    background: var(--cr-surface);
+    color: var(--cr-text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgb(14 15 12 / 0.08);
+    transition:
+      background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+      border-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+      transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+      box-shadow 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  .cr-icon-btn:hover {
+    background: var(--cr-surface-soft);
+    border-color: var(--color-wise-500);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgb(159 232 112 / 0.25);
+  }
+  .cr-icon-btn:active { transform: translateY(0) scale(0.96); }
+  html.dark .cr-icon-btn {
+    box-shadow: 0 2px 8px rgb(0 0 0 / 0.3);
+  }
+}
+
+/* Strong-curve easing variables — Emil's spec.
+   Avoid CSS built-in ease curves; they feel weak. */
+:root {
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);     /* strong ease-out */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);    /* strong ease-in-out */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);     /* iOS drawer */
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   Decorative animations (transform + opacity only — ui-animation rule)
+   ───────────────────────────────────────────────────────────────────── */
+
+@keyframes cr-drift-1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(40px, -30px, 0) scale(1.05); }
+}
+@keyframes cr-drift-2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(-30px, 20px, 0) scale(0.95); }
+}
+@keyframes cr-shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+@keyframes cr-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes cr-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.55; transform: scale(0.92); }
+}
+@keyframes cr-spin {
+  to { transform: rotate(360deg); }
+}
+
+.cr-anim-drift-1   { animation: cr-drift-1 14s ease-in-out infinite;       will-change: transform; }
+.cr-anim-drift-2   { animation: cr-drift-2 18s ease-in-out infinite;       will-change: transform; }
+.cr-anim-shimmer   { animation: cr-shimmer 1.4s linear infinite;           will-change: transform; }
+.cr-anim-fade-up   { animation: cr-fade-up 480ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cr-anim-pulse-dot { animation: cr-pulse-dot 1.8s ease-in-out infinite; }
+.cr-anim-spin      { animation: cr-spin 0.75s linear infinite; }
+
+.cr-stagger > *               { opacity: 0; animation: cr-fade-up 420ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.cr-stagger > *:nth-child(1)  { animation-delay: 60ms;  }
+.cr-stagger > *:nth-child(2)  { animation-delay: 110ms; }
+.cr-stagger > *:nth-child(3)  { animation-delay: 160ms; }
+.cr-stagger > *:nth-child(4)  { animation-delay: 210ms; }
+.cr-stagger > *:nth-child(5)  { animation-delay: 260ms; }
+.cr-stagger > *:nth-child(6)  { animation-delay: 310ms; }
+.cr-stagger > *:nth-child(7)  { animation-delay: 360ms; }
+.cr-stagger > *:nth-child(8)  { animation-delay: 410ms; }
+
+.cr-bg-grain {
+  background-image: radial-gradient(rgb(14 15 12 / 0.035) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+html.dark .cr-bg-grain {
+  background-image: radial-gradient(rgb(255 255 255 / 0.035) 1px, transparent 1px);
+}
+
+/* Page transitions (asymmetric: enter slow, leave fast) */
+.page-enter-active { transition: opacity 250ms cubic-bezier(0.22, 1, 0.36, 1), transform 250ms cubic-bezier(0.22, 1, 0.36, 1); }
+.page-leave-active { transition: opacity 150ms cubic-bezier(0.22, 1, 0.36, 1), transform 150ms cubic-bezier(0.22, 1, 0.36, 1); }
+.page-enter-from   { opacity: 0; transform: translateY(8px); }
+.page-leave-to     { opacity: 0; transform: translateY(-6px); }

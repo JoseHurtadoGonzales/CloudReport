@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "css-animations": {
+      "source": "heygen-com/hyperframes",
+      "sourceType": "github",
+      "skillPath": "skills/css-animations/SKILL.md",
+      "computedHash": "df468749b06a8ec7369cfea69bf71bf65e46cfc376e837e439e26f4230852c6b"
+    },
+    "emil-design-eng": {
+      "source": "emilkowalski/skill",
+      "sourceType": "github",
+      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "computedHash": "8bdf9e4e6de7a4969147bf4828a4ad2c5aacd9fba4b690b250a85e0467ca387d"
+    },
+    "nuxt-ui": {
+      "source": "nuxt/ui",
+      "sourceType": "github",
+      "skillPath": "skills/nuxt-ui/SKILL.md",
+      "computedHash": "2d58c6092b7028db223a819d5a37badc860a4036ca134a3e457ce7b056562f72"
+    },
+    "ui-animation": {
+      "source": "mblode/agent-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ui-animation/SKILL.md",
+      "computedHash": "c7d053938a54f5f7a5c8465824094c584128878f02d617618dbdf281b66fa180"
+    }
+  }
+}

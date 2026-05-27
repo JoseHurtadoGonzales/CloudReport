@@ -1,0 +1,25 @@
+{
+  "name": "cloud-report-ui",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "nuxt dev --host 0.0.0.0 --port 3030",
+    "build": "nuxt build",
+    "preview": "nuxt preview --host 0.0.0.0 --port 3030",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@iconify-json/lucide": "^1.2.74",
+    "@iconify/vue": "^4.3.0",
+    "@nuxt/ui": "^4.8.0",
+    "@pinia/nuxt": "^0.11.0",
+    "@vueuse/core": "^12.7.0",
+    "@vueuse/motion": "^3.0.1",
+    "@vueuse/nuxt": "^12.7.0",
+    "nuxt": "^4.1.0",
+    "pinia": "^3.0.1",
+    "shiki": "^4.1.0",
+    "vue": "^3.5.13",
+    "zod": "^4.4.3"
+  }
+}

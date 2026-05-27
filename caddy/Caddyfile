@@ -1,0 +1,140 @@
+# Caddyfile — Cloud-Report
+#
+# Modelo (igual que System_Report): solo Caddy escucha públicamente. API,
+# frontend, n8n y las UIs de SeaweedFS viven en la red interna `internal` sin
+# puertos expuestos al host.
+#
+#   • https://<host>/api|/odata|/reports|/assets|/studio|/public-templates|/ws → api:5488
+#   • https://<host>/*                                                          → ui:3030 (Nuxt SSR)
+#   • https://<host>:5678  → n8n
+#   • https://<host>:9080  → SeaweedFS filer UI   (basic auth)
+#   • https://<host>:9081  → SeaweedFS master UI  (basic auth)
+#
+# TLS: Caddy genera su propio CA/cert para el host o IP que llegue (LAN sin
+# FQDN). El browser pedirá aceptarlo la primera vez. Con un dominio real,
+# reemplazá `tls internal { on_demand }` por el dominio y Caddy saca cert
+# Let's Encrypt automático.
+{
+	# En LAN sin dominio gestionamos TLS nosotros. Con un FQDN público,
+	# borrá esta línea para que auto_https saque cert de Let's Encrypt.
+	auto_https off
+
+	# Permite emitir certs on-demand para cualquier host/IP entrante. El
+	# `ask` valida contra el healthcheck del API antes de emitir.
+	on_demand_tls {
+		ask http://api:5488/api/ping
+	}
+
+	log default {
+		output file /var/log/caddy/runtime.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+		level INFO
+	}
+}
+
+# ── HTTP :80 → redirección permanente a HTTPS ──────────────────────────
+:80 {
+	respond /caddy/health 200 {
+		body "ok"
+	}
+	redir https://{host}{uri} permanent
+}
+
+# ── HTTPS :443 — frontend + backend ────────────────────────────────────
+:443 {
+	tls internal {
+		on_demand
+	}
+
+	log {
+		output file /var/log/caddy/access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+		format json
+		level INFO
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	respond /caddy/health 200 {
+		body "ok"
+	}
+
+	# Backend Go — todos los prefijos que sirve la API de cloud-report.
+	# WebSocket (/ws) lo maneja reverse_proxy de forma transparente.
+	@api {
+		path /api/* /odata/* /reports/* /assets/* /studio/* /public-templates/* /ws /ws/*
+	}
+	handle @api {
+		reverse_proxy api:5488 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {remote_host}
+			lb_try_duration 3s
+			lb_try_interval 250ms
+			fail_duration 10s
+		}
+	}
+
+	# Todo lo demás → frontend Nuxt (SSR). El navegador nunca toca el backend
+	# directo: usa rutas relativas (/api, /odata, …) sobre este mismo origen.
+	handle {
+		reverse_proxy ui:3030 {
+			header_up X-Forwarded-Proto https
+			header_up X-Forwarded-For {remote_host}
+			lb_try_duration 3s
+			lb_try_interval 250ms
+			fail_duration 10s
+		}
+	}
+}
+
+# ── n8n :5678 — automatización ─────────────────────────────────────────
+# n8n necesita servirse en la raíz de un host/puerto (no soporta path-prefix
+# cómodamente), por eso va en su propio vhost. Auth la maneja n8n.
+:5678 {
+	tls internal {
+		on_demand
+	}
+	reverse_proxy n8n:5678 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+# ── SeaweedFS UIs (LAN, basic auth de Caddy) ───────────────────────────
+# Las UIs hacen referencias absolutas (/seaweedfsstatic/, /buckets/…) y no
+# soportan path-prefix, por eso van en puertos dedicados.
+:9080 {
+	tls internal {
+		on_demand
+	}
+	basic_auth {
+		{$SEAWEEDFS_UI_USER} {$SEAWEEDFS_UI_PASSWORD_HASH}
+	}
+	reverse_proxy seaweedfs-filer:8888 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+:9081 {
+	tls internal {
+		on_demand
+	}
+	basic_auth {
+		{$SEAWEEDFS_UI_USER} {$SEAWEEDFS_UI_PASSWORD_HASH}
+	}
+	reverse_proxy seaweedfs-master:9333 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-For {remote_host}
+	}
+}
