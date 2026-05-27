@@ -57,23 +57,32 @@ flowchart TD
 
     Caddy -->|/ ·| UI[🖥️ Nuxt UI<br/>:3030]
     Caddy -->|/api /odata /reports /assets| API[⚙️ Go API<br/>:5488]
-    Caddy -->|:5678| N8N[🤖 n8n]
+    Caddy -->|:5678| N8N[🤖 n8n main]
     Caddy -->|:19080 / :19081| SWUI[(SeaweedFS UIs)]
 
-    API --> PG[(🐘 PostgreSQL)]
-    API --> REDIS[(⚡ Redis<br/>cola de jobs)]
-    API --> S3[(🗄️ SeaweedFS S3<br/>blobs / reportes)]
+    subgraph APP[Plataforma de reportes]
+      API --> PG[(🐘 PostgreSQL)]
+      API --> REDIS[(⚡ Redis · streams)]
+      API --> S3[(🗄️ SeaweedFS S3<br/>blobs / reportes)]
+      REDIS -->|streams| W1[🐍 chromium-pdf]
+      REDIS -->|streams| W2[🐍 weasyprint]
+      REDIS -->|streams| W3[🐍 docx]
+      REDIS -->|streams| W4[🐍 pptx]
+      REDIS -->|streams| W5[🐍 html-to-xlsx]
+      W1 & W2 & W3 & W4 & W5 --> S3
+    end
 
-    REDIS -->|streams| W1[🐍 chromium-pdf]
-    REDIS -->|streams| W2[🐍 weasyprint]
-    REDIS -->|streams| W3[🐍 docx]
-    REDIS -->|streams| W4[🐍 pptx]
-    REDIS -->|streams| W5[🐍 html-to-xlsx]
-
-    W1 & W2 & W3 & W4 & W5 --> S3
+    subgraph AUTO[n8n · infraestructura propia y aislada]
+      N8N --> NPG[(🐘 n8n-postgres)]
+      N8N --> NRD[(⚡ n8n-redis · cola Bull)]
+      NRD --> NW1[🔧 n8n-worker ×N]
+      NW1 --> NPG
+    end
 ```
 
 El **navegador solo habla con Caddy** (HTTPS). El frontend usa rutas relativas (`/api`, `/odata`…) sobre el mismo origen, y Caddy las enruta al backend Go o al Nuxt según el path. Los workers de render corren en Python y reciben jobs por **streams de Redis**, devolviendo los binarios a **SeaweedFS**.
+
+**n8n corre totalmente aislado**: su propio PostgreSQL y Redis (no comparte datos con la app), en **modo queue** con una flota de workers escalable. Un solo `docker compose up -d` levanta las dos mitades —la plataforma de reportes y la automatización— juntas.
 
 ---
 
@@ -88,7 +97,7 @@ El **navegador solo habla con Caddy** (HTTPS). El frontend usa rutas relativas (
 | **Cola** | Redis 7 (streams) |
 | **Almacenamiento** | SeaweedFS (API S3) |
 | **Proxy / TLS** | Caddy 2 |
-| **Automatización** | n8n (latest) |
+| **Automatización** | n8n (queue mode) + Postgres y Redis propios |
 
 ---
 
@@ -156,6 +165,13 @@ Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3), A
 | `N8N_HOST_PORT` | `5678` | Puerto de n8n. |
 | `SEAWEEDFS_FILER_UI_PORT` / `MASTER_UI_PORT` | `19080` / `19081` | UIs de admin de SeaweedFS. |
 | `SEAWEEDFS_UI_USER` / `PASSWORD_HASH` | `admin` / *(default)* | Basic-auth de las UIs de SeaweedFS. |
+| `N8N_HOST` / `N8N_WEBHOOK_URL` | `10.71.1.125` | Host/URL pública de n8n (no `localhost` — los webhooks deben resolver desde afuera). |
+| `N8N_VERSION` | `latest` | Tag de la imagen de n8n. |
+| `N8N_WORKERS` | `2` | Réplicas de `n8n-worker` que consumen la cola. |
+| `N8N_ENCRYPTION_KEY` | *(requerido)* | Cifra credenciales de n8n. **Constante.** `openssl rand -hex 32`. |
+| `N8N_DB_NAME/USER/PASSWORD` | `n8n` | Postgres dedicado de n8n. |
+| `N8N_REDIS_PASSWORD` | *(requerido)* | Password del Redis dedicado de n8n. |
+| `N8N_SECURE_COOKIE` | `false` | `true` solo con cert de confianza end-to-end. |
 
 > 🔑 Para una clave propia de las UIs de SeaweedFS (escapando los `$` para Compose):
 > ```bash
@@ -230,6 +246,40 @@ curl -X POST https://<host>:8443/api/report \
 ```
 
 > Generá tu API key en **Configuración → API Keys**. La doc completa está embebida en la app en **`/docs`**.
+
+---
+
+## 🤖 Automatización con n8n
+
+n8n viene integrado para orquestar workflows (por ejemplo: disparar un render de Cloud-Report cuando llega un webhook, en un cron, o tras un evento). Corre con **su propia base de datos y su propio Redis** —separados de los de la app— en **modo queue**:
+
+- **`n8n`** — instancia principal: UI, editor y manejo de webhooks. Es la **única** que corre migraciones de la DB.
+- **`n8n-worker`** — flota de workers que ejecutan los workflows tomados de la cola Bull en Redis. Escalás con `N8N_WORKERS` (default 2).
+- **`n8n-postgres`** / **`n8n-redis`** — datastores dedicados con volúmenes propios.
+
+```mermaid
+flowchart LR
+    Trigger([Webhook / Cron]) --> Main[n8n main]
+    Main -->|encola| Q[(n8n-redis · Bull)]
+    Q --> W1[worker 1]
+    Q --> W2[worker 2]
+    W1 & W2 -->|HTTP POST /api/report| API[Cloud-Report API]
+    W1 & W2 --> DB[(n8n-postgres)]
+```
+
+**Acceso:** `https://<host>:5678` (vía Caddy). La primera vez creás el usuario owner de n8n.
+
+**Claves importantes:**
+- `N8N_ENCRYPTION_KEY` — cifra las credenciales guardadas. **Debe ser constante**; si la cambiás, n8n no puede leer las credenciales existentes. Generala una vez con `openssl rand -hex 32`.
+- Todas las instancias (main + workers) comparten esa misma key y la misma DB/Redis — por eso van en el ancla `x-n8n-common` del compose.
+- Los workers arrancan **después** de que el main esté `healthy` (migraciones hechas), evitando el típico choque de migraciones concurrentes en el primer boot.
+
+**Escalar workers:**
+```bash
+# en .env
+N8N_WORKERS=4
+docker compose up -d n8n-worker
+```
 
 ---
 

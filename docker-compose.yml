@@ -12,6 +12,39 @@ x-seaweed-env: &seaweed-env
 x-redis-env: &redis-env
   REDIS_URL: "redis://redis:6379/0"
 
+# n8n runs in QUEUE mode with its OWN Postgres + Redis (isolated from the app's
+# datastores). Both the main instance and the workers share this config.
+x-n8n-common: &n8n-common
+  image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-latest}
+  restart: unless-stopped
+  environment: &n8n-env
+    DB_TYPE: postgresdb
+    DB_POSTGRESDB_HOST: n8n-postgres
+    DB_POSTGRESDB_PORT: "5432"
+    DB_POSTGRESDB_DATABASE: "${N8N_DB_NAME:-n8n}"
+    DB_POSTGRESDB_USER: "${N8N_DB_USER:-n8n}"
+    DB_POSTGRESDB_PASSWORD: "${N8N_DB_PASSWORD:-n8n}"
+    EXECUTIONS_MODE: queue
+    QUEUE_BULL_REDIS_HOST: n8n-redis
+    QUEUE_BULL_REDIS_PORT: "6379"
+    QUEUE_BULL_REDIS_PASSWORD: "${N8N_REDIS_PASSWORD:-n8nredis}"
+    QUEUE_HEALTH_CHECK_ACTIVE: "true"
+    N8N_RUNNERS_MODE: internal
+    N8N_RUNNERS_ENABLED: "true"
+    GENERIC_TIMEZONE: "${N8N_TZ:-America/La_Paz}"
+    TZ: "${N8N_TZ:-America/La_Paz}"
+    NODE_FUNCTION_ALLOW_BUILTIN: net,dns,tls
+    # MUST be set and identical across main + workers (queue mode). Generate
+    # with: openssl rand -hex 32
+    N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:-change-me-n8n-encryption-key}"
+  volumes:
+    - n8n_storage:/home/node/.n8n
+  depends_on:
+    n8n-postgres:
+      condition: service_healthy
+    n8n-redis:
+      condition: service_healthy
+
 services:
 
   # ---------- DATA STORES ----------
@@ -233,25 +266,77 @@ services:
       - caddy_config:/config
       - caddy_logs:/var/log/caddy
 
-  # ---------- AUTOMATION (n8n, latest) ----------
-  # cloud-report is meant to pair with n8n for workflow automation (e.g. fire
-  # a render from a workflow). Reached at https://<host>:5678 via Caddy.
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: cr-n8n
+  # ---------- AUTOMATION (n8n, queue mode, own datastores) ----------
+  # n8n's dedicated Postgres — separate from the app's `postgres` so workflow
+  # data and report data never share a database.
+  n8n-postgres:
+    image: postgres:16-alpine
+    container_name: cr-n8n-postgres
     restart: unless-stopped
     environment:
-      # n8n sits behind Caddy on a dedicated TLS vhost.
+      POSTGRES_USER: "${N8N_DB_USER:-n8n}"
+      POSTGRES_PASSWORD: "${N8N_DB_PASSWORD:-n8n}"
+      POSTGRES_DB: "${N8N_DB_NAME:-n8n}"
+    volumes:
+      - n8n_db_storage:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${N8N_DB_USER:-n8n} -d ${N8N_DB_NAME:-n8n}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # n8n's dedicated Redis — the Bull queue backing the worker fleet.
+  n8n-redis:
+    image: redis:7-alpine
+    container_name: cr-n8n-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${N8N_REDIS_PASSWORD:-n8nredis}", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - n8n_redis_storage:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${N8N_REDIS_PASSWORD:-n8nredis}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # n8n main (UI + webhook handler). Reached at https://<host>:5678 via Caddy.
+  # It is the ONLY instance that runs DB migrations — the workers wait for it
+  # to become healthy first, avoiding the migration race that corrupts a fresh
+  # database when several instances migrate at once.
+  n8n:
+    <<: *n8n-common
+    container_name: cr-n8n
+    environment:
+      <<: *n8n-env
       N8N_HOST: "${N8N_HOST:-10.71.1.125}"
       N8N_PORT: "5678"
       N8N_PROTOCOL: "https"
-      N8N_SECURE_COOKIE: "false"          # internal TLS cert — relax the secure-cookie strictness
-      WEBHOOK_URL: "${N8N_WEBHOOK_URL:-https://10.71.1.125:5678/}"
+      # Caddy terminates TLS and forwards X-Forwarded-Proto=https.
+      N8N_SECURE_COOKIE: "${N8N_SECURE_COOKIE:-false}"
       N8N_TRUST_PROXY: "true"
-      GENERIC_TIMEZONE: "${N8N_TZ:-America/La_Paz}"
-      N8N_RUNNERS_ENABLED: "true"
-    volumes:
-      - n8n_data:/home/node/.n8n
+      WEBHOOK_URL: "${N8N_WEBHOOK_URL:-https://10.71.1.125:5678/}"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    # No host ports — served through Caddy on :5678.
+
+  # n8n workers — pull jobs from the dedicated Redis queue. Scale with N8N_WORKERS.
+  # They start only AFTER the main instance is healthy (migrations done).
+  n8n-worker:
+    <<: *n8n-common
+    command: worker
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+      n8n-redis:
+        condition: service_healthy
+      n8n:
+        condition: service_healthy
+    deploy:
+      replicas: ${N8N_WORKERS:-2}
 
 volumes:
   pgdata:
@@ -260,4 +345,6 @@ volumes:
   caddy_data:
   caddy_config:
   caddy_logs:
-  n8n_data:
+  n8n_storage:
+  n8n_db_storage:
+  n8n_redis_storage:
