@@ -24,6 +24,8 @@ Plataforma de generación de reportes: **Go API** + **Nuxt UI** + **workers Pyth
 - [🔌 Puertos](#-puertos)
 - [🔄 Flujo de render](#-flujo-de-render)
 - [📡 Uso de la API](#-uso-de-la-api)
+- [🤖 Automatización con n8n](#-automatización-con-n8n)
+- [🗄️ SeaweedFS Admin Console](#️-seaweedfs-admin-console)
 - [🗂️ Estructura del proyecto](#️-estructura-del-proyecto)
 - [🛠️ Desarrollo](#️-desarrollo)
 - [🧪 Tests](#-tests)
@@ -58,7 +60,7 @@ flowchart TD
     Caddy -->|/ ·| UI[🖥️ Nuxt UI<br/>:3030]
     Caddy -->|/api /odata /reports /assets| API[⚙️ Go API<br/>:5488]
     Caddy -->|:5678| N8N[🤖 n8n main]
-    Caddy -->|:19080 / :19081| SWUI[(SeaweedFS UIs)]
+    Caddy -->|:19080 / :19081 / :19082| SWUI[(SeaweedFS UIs<br/>filer · master · admin)]
 
     subgraph APP[Plataforma de reportes]
       API --> PG[(🐘 PostgreSQL)]
@@ -137,7 +139,7 @@ N8N_WEBHOOK_URL=https://10.71.1.125:5678/
 docker compose up -d --build
 ```
 
-Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3), API Go, UI Nuxt, los 5 workers, Caddy y n8n. En el **primer arranque** se crea automáticamente el usuario admin definido en `.env`.
+Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3 + admin console), API Go, UI Nuxt, los 5 workers, Caddy, y n8n con su propio Postgres/Redis + workers. En el **primer arranque** se crea automáticamente el usuario admin definido en `.env`.
 
 ### 4. Acceder
 
@@ -145,8 +147,9 @@ Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3), A
 |----------|-----|--------------|
 | **App** | `https://<host>:8443` | tu admin de `.env` |
 | **n8n** | `https://<host>:5678` | se configura al primer ingreso |
-| **SeaweedFS filer UI** | `https://<host>:19080` | `admin` / `cloudreport` (o tu hash) |
-| **SeaweedFS master UI** | `https://<host>:19081` | idem |
+| **SeaweedFS Admin Console** ⭐ | `https://<host>:19082` | `SEAWEEDFS_ADMIN_USER` / `_PASSWORD` (login propio) |
+| **SeaweedFS filer UI** (debug) | `https://<host>:19080` | `SEAWEEDFS_UI_USER` / basic-auth |
+| **SeaweedFS master UI** (debug) | `https://<host>:19081` | idem |
 
 > La primera vez el navegador pedirá aceptar el certificado (es auto-firmado por Caddy en LAN sin dominio — normal).
 
@@ -163,8 +166,9 @@ Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3), A
 | `NUXT_PUBLIC_API_BASE` | *(vacío)* | Vacío = rutas relativas detrás de Caddy. URL absoluta solo si NO usás proxy. |
 | `CADDY_HTTPS_PORT` | `8443` | Puerto HTTPS público. En server dedicado poné `443`. |
 | `N8N_HOST_PORT` | `5678` | Puerto de n8n. |
-| `SEAWEEDFS_FILER_UI_PORT` / `MASTER_UI_PORT` | `19080` / `19081` | UIs de admin de SeaweedFS. |
-| `SEAWEEDFS_UI_USER` / `PASSWORD_HASH` | `admin` / *(default)* | Basic-auth de las UIs de SeaweedFS. |
+| `SEAWEEDFS_FILER_UI_PORT` / `MASTER_UI_PORT` / `ADMIN_PORT` | `19080` / `19081` / `19082` | UIs de SeaweedFS (filer, master, admin console). |
+| `SEAWEEDFS_UI_USER` / `PASSWORD_HASH` | `admin` / *(default)* | Basic-auth de las UIs filer/master. |
+| `SEAWEEDFS_ADMIN_USER` / `_PASSWORD` | `admin` / `cloudreport` | Login propio del Admin Console (sesión, no basic-auth). |
 | `N8N_HOST` / `N8N_WEBHOOK_URL` | `10.71.1.125` | Host/URL pública de n8n (no `localhost` — los webhooks deben resolver desde afuera). |
 | `N8N_VERSION` | `latest` | Tag de la imagen de n8n. |
 | `N8N_WORKERS` | `2` | Réplicas de `n8n-worker` que consumen la cola. |
@@ -186,7 +190,7 @@ Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3), A
 |-------------|----------|
 | `8443` | HTTPS — frontend + API (vía Caddy) |
 | `5678` | n8n (vía Caddy) |
-| `19080` / `19081` | SeaweedFS filer / master UI |
+| `19080` / `19081` / `19082` | SeaweedFS filer / master UI / **Admin Console** |
 | `15432` | PostgreSQL (debug) |
 | `16379` | Redis (debug) |
 | `8333` / `8888` / `9333` / `8080` | SeaweedFS s3 / filer / master / volume (debug) |
@@ -280,6 +284,27 @@ flowchart LR
 N8N_WORKERS=4
 docker compose up -d n8n-worker
 ```
+
+---
+
+## 🗄️ SeaweedFS Admin Console
+
+Cloud-Report incluye la **UI oficial moderna de SeaweedFS** (`weed admin`) con dashboard, navegador de buckets S3, gestión de usuarios IAM con sus claves, filer browser, métricas del cluster y mantenimiento programado. Es lo que usás en el día a día para inspeccionar lo que se guardó.
+
+**Acceso:** `https://<host>:19082` — login con `SEAWEEDFS_ADMIN_USER` / `SEAWEEDFS_ADMIN_PASSWORD` (form propio, sesión).
+
+Las dos UIs viejas (`:19080` filer, `:19081` master) siguen disponibles bajo basic-auth de Caddy para debug crudo, pero **la Admin Console es la recomendada**.
+
+```mermaid
+flowchart LR
+    Admin[weed admin :23646] -->|gRPC| Master[(master :9333)]
+    Admin -->|HTTP| Filer[(filer :8888)]
+    Browser([🌐]) -->|HTTPS :19082| Caddy[🔒 Caddy] --> Admin
+```
+
+Internamente, el binario `weed admin` se conecta al master y descubre los filers; expone su propia UI HTTP en `:23646`. Caddy la publica con TLS interno en el puerto `:19082` del host. La auth no la maneja Caddy (sería redundante) sino la propia app con sesión.
+
+Para regenerar la clave del admin: editás `SEAWEEDFS_ADMIN_PASSWORD` en `.env` y `docker compose up -d seaweedfs-admin` (re-aplica el flag `-adminPassword` en el restart).
 
 ---
 
