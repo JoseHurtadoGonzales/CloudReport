@@ -138,3 +138,18 @@
 		header_up X-Forwarded-For {remote_host}
 	}
 }
+
+# ── SeaweedFS Admin Console (auth nativa con sesión) ───────────────────
+# Esta es la UI moderna oficial de SeaweedFS: dashboard, buckets S3,
+# IAM users/keys, filer browser y métricas. La autenticación la maneja la
+# propia app (form de login con SEAWEEDFS_ADMIN_USER/PASSWORD), por eso
+# Caddy NO añade basic auth aquí — duplicaría credenciales.
+:9082 {
+	tls internal {
+		on_demand
+	}
+	reverse_proxy seaweedfs-admin:23646 {
+		header_up X-Forwarded-Proto https
+		header_up X-Forwarded-For {remote_host}
+	}
+}

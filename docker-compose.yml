@@ -74,22 +74,28 @@ services:
       interval: 5s
       retries: 10
 
-  # ---------- SEAWEEDFS (master + volume + filer + s3) ----------
+  # ---------- SEAWEEDFS (master + volume + filer + s3 + admin console) ----------
   seaweedfs-master:
     image: chrislusf/seaweedfs:latest
     container_name: cr-seaweed-master
-    command: "master -ip=seaweedfs-master -mdir=/data"
+    command: ["master", "-ip=seaweedfs-master", "-ip.bind=0.0.0.0", "-mdir=/data"]
     ports:
       - "9333:9333"
     volumes:
       - seaweed-master:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:9333/cluster/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   seaweedfs-volume:
     image: chrislusf/seaweedfs:latest
     container_name: cr-seaweed-volume
-    command: "volume -mserver=seaweedfs-master:9333 -ip=seaweedfs-volume -dir=/data -max=10"
+    command: ["volume", "-mserver=seaweedfs-master:9333", "-ip=seaweedfs-volume", "-ip.bind=0.0.0.0", "-dir=/data", "-max=10"]
     depends_on:
-      - seaweedfs-master
+      seaweedfs-master:
+        condition: service_healthy
     ports:
       - "8080:8080"
     volumes:
@@ -98,23 +104,57 @@ services:
   seaweedfs-filer:
     image: chrislusf/seaweedfs:latest
     container_name: cr-seaweed-filer
-    command: "filer -master=seaweedfs-master:9333 -ip=seaweedfs-filer"
+    command: ["filer", "-master=seaweedfs-master:9333", "-ip=seaweedfs-filer", "-ip.bind=0.0.0.0"]
     depends_on:
-      - seaweedfs-master
-      - seaweedfs-volume
+      seaweedfs-master:
+        condition: service_healthy
     ports:
       - "8888:8888"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8888/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   seaweedfs-s3:
     image: chrislusf/seaweedfs:latest
     container_name: cr-seaweed-s3
-    command: "s3 -filer=seaweedfs-filer:8888 -ip.bind=0.0.0.0 -port=8333 -config=/etc/seaweed/s3.json"
+    command: ["s3", "-filer=seaweedfs-filer:8888", "-ip.bind=0.0.0.0", "-port=8333", "-config=/etc/seaweed/s3.json"]
     depends_on:
-      - seaweedfs-filer
+      seaweedfs-filer:
+        condition: service_healthy
     ports:
       - "8333:8333"
     volumes:
       - ./infra/seaweed/s3.json:/etc/seaweed/s3.json:ro
+
+  # SeaweedFS Admin Console (binario `weed admin`) — UI moderna con dashboard,
+  # buckets S3, IAM users/keys, navegación del filer y métricas. Auth propia con
+  # sesión (no usa el basic-auth de Caddy). Expuesta vía Caddy en :19082.
+  seaweedfs-admin:
+    image: chrislusf/seaweedfs:latest
+    container_name: cr-seaweed-admin
+    restart: unless-stopped
+    command:
+      - "admin"
+      - "-master=seaweedfs-master:9333"
+      - "-port=23646"
+      - "-adminUser=${SEAWEEDFS_ADMIN_USER:-admin}"
+      - "-adminPassword=${SEAWEEDFS_ADMIN_PASSWORD:-cloudreport}"
+      - "-dataDir=/data"
+    volumes:
+      - seaweed_admin:/data
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-filer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- --tries=1 --timeout=3 http://localhost:23646/login >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # ---------- GO API ----------
   api:
@@ -260,6 +300,7 @@ services:
       - "${N8N_HOST_PORT:-5678}:5678"        # n8n
       - "${SEAWEEDFS_FILER_UI_PORT:-19080}:9080"   # SeaweedFS filer UI
       - "${SEAWEEDFS_MASTER_UI_PORT:-19081}:9081"  # SeaweedFS master UI
+      - "${SEAWEEDFS_ADMIN_PORT:-19082}:9082"      # SeaweedFS Admin Console
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -348,3 +389,4 @@ volumes:
   n8n_storage:
   n8n_db_storage:
   n8n_redis_storage:
+  seaweed_admin:
