@@ -17,6 +17,10 @@ type EntitySpec struct {
 	Insertable []string // columns accepted in INSERT/UPDATE (excludes id, created_at, updated_at)
 	HasUpdated bool
 	HasShortid bool
+	// DefaultOrder is the ORDER BY clause used when the request has no
+	// $orderby. Set it for tables that lack both updated_at and created_at
+	// (e.g. profiles, which timestamps with started_at instead).
+	DefaultOrder string
 }
 
 var EntitySpecs = map[string]EntitySpec{
@@ -81,6 +85,8 @@ var EntitySpecs = map[string]EntitySpec{
 		Columns:    []string{"id", "shortid", "template_shortid", "state", "mode", "error", "blob_key", "timeout_ms", "started_at", "finished_at", "owner_id"},
 		Insertable: []string{"shortid", "template_shortid", "state", "mode", "error", "blob_key", "timeout_ms", "started_at", "finished_at", "owner_id"},
 		HasUpdated: false, HasShortid: true,
+		// profiles has no created_at/updated_at — it timestamps with started_at.
+		DefaultOrder: "started_at DESC",
 	},
 	"settings": {
 		Table:      "settings",
@@ -122,6 +128,8 @@ func (s *Store) ListGeneric(ctx context.Context, spec EntitySpec, where string, 
 	}
 	if orderBy != "" {
 		q += " ORDER BY " + orderBy
+	} else if spec.DefaultOrder != "" {
+		q += " ORDER BY " + spec.DefaultOrder
 	} else if spec.HasUpdated {
 		q += " ORDER BY updated_at DESC"
 	} else {
