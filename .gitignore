@@ -82,6 +82,10 @@ env/
 # Named volumes live in the docker engine, not the repo — but ignore any
 # accidental local bind-mount data dirs.
 **/data/
+# ...except real source code that happens to live in a `data/` dir (the UI
+# "Data items" page). Without this the page is silently excluded from git.
+!ui/pages/data/
+!ui/pages/data/**
 caddy/data/
 caddy/config/
 seaweed-data/
