@@ -4,6 +4,7 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	pdfapi "github.com/pdfcpu/pdfcpu/pkg/api"
 
 	"github.com/cloudreport/api/internal/blob"
 	"github.com/cloudreport/api/internal/config"
@@ -247,7 +250,11 @@ func (r *Renderer) Render(ctx context.Context, req *Request, user *models.User) 
 
 	// PDF post-processing — only if the recipe output is PDF.
 	if len(tpl.PdfOperations) > 0 && strings.HasPrefix(out.MimeType, "application/pdf") {
-		resolved, rerr := r.resolveAppendTemplates(ctx, tpl.PdfOperations, req.Data)
+		// Count pages of the main PDF so we can support jsreport-style
+		// {{$pdf.pageNumber}} / {{$pdf.pages.length}} substitution in stamp
+		// templates (rendered once per page with those vars injected).
+		totalPages, _ := pdfapi.PageCount(bytes.NewReader(out.Content), nil)
+		resolved, rerr := r.resolveAppendTemplates(ctx, tpl.PdfOperations, req.Data, totalPages)
 		if rerr != nil {
 			r.finishProfile(ctx, prof, "error", rerr)
 			return nil, fmt.Errorf("appendTemplate: %w", rerr)
@@ -456,8 +463,14 @@ func injectStyles(html, css, size, orientation, margin string) string {
 //
 //	appendTemplate → append, prependTemplate → prepend, stampTemplate → merge+stamp
 //
+// When the stamp template contains jsreport-style {{$pdf.pageNumber}} or
+// {{$pdf.pages.length}} placeholders AND we know the total page count of the
+// main document, the op is expanded into N stamp ops — one per page — each
+// rendered with the appropriate $pdf vars injected into the data. This
+// mirrors jsreport-pdf-utils' per-page rendering for header/footer use-cases.
+//
 // Keeps the pdfutils package free of any knowledge of the render pipeline.
-func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessage, data json.RawMessage) (json.RawMessage, error) {
+func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessage, data json.RawMessage, totalPages int) (json.RawMessage, error) {
 	if len(ops) == 0 {
 		return ops, nil
 	}
@@ -465,13 +478,15 @@ func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessa
 	if err := json.Unmarshal(ops, &list); err != nil {
 		return ops, nil
 	}
+	newList := make([]map[string]any, 0, len(list))
 	changed := false
-	for i, op := range list {
+	for _, op := range list {
 		t, _ := op["type"].(string)
 		shortid, _ := op["templateShortid"].(string)
 		if shortid == "" {
 			// Nothing to render; leave the op alone (might be a static merge
 			// with a pre-uploaded pdfBase64).
+			newList = append(newList, op)
 			continue
 		}
 
@@ -499,11 +514,36 @@ func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessa
 				nextType = "stamp"
 			}
 		default:
+			newList = append(newList, op)
 			continue
 		}
 
-		// Recursive render — same data, no profiling, no further pdfOps to
-		// avoid infinite recursion if a template references itself.
+		// jsreport-style {{$pdf.*}} per-page expansion. Only applies to stamp
+		// ops where we know the page count. We peek at the template content
+		// once to decide whether per-page rendering is needed; for templates
+		// that don't reference $pdf, a single render suffices (matches the
+		// original behaviour).
+		needsPerPage := false
+		if nextType == "stamp" && totalPages > 0 {
+			if tpl, err := r.db.GetTemplateByShortid(ctx, shortid); err == nil && tpl != nil {
+				if templateReferencesPdfVars(tpl.Content) || templateReferencesPdfVars(tpl.CSS) {
+					needsPerPage = true
+				}
+			}
+		}
+
+		if needsPerPage {
+			pageOps, err := r.renderPerPageStamps(ctx, shortid, data, totalPages)
+			if err != nil {
+				return nil, fmt.Errorf("template %q: %w", shortid, err)
+			}
+			newList = append(newList, pageOps...)
+			changed = true
+			continue
+		}
+
+		// Default path: single render, same data, no profiling, no further
+		// pdfOps to avoid infinite recursion if a template references itself.
 		req := &Request{}
 		req.Template.Shortid = shortid
 		req.Data = data
@@ -522,13 +562,108 @@ func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessa
 		if pages, ok := op["pages"].(string); ok && pages != "" {
 			next["pages"] = pages
 		}
-		list[i] = next
+		newList = append(newList, next)
 		changed = true
 	}
 	if !changed {
 		return ops, nil
 	}
-	return json.Marshal(list)
+	return json.Marshal(newList)
+}
+
+// templateReferencesPdfVars reports whether the template content uses any of
+// the jsreport-style {{$pdf.*}} placeholders. We check the raw template
+// instead of waiting for the engine to error, because raymond doesn't
+// recognise `$pdf` as a variable name and would silently emit empty strings.
+func templateReferencesPdfVars(content string) bool {
+	if content == "" {
+		return false
+	}
+	return strings.Contains(content, "{{$pdf.pageNumber}}") ||
+		strings.Contains(content, "{{$pdf.pages.length}}") ||
+		strings.Contains(content, "{{$pdf.pages.pageNumber}}")
+}
+
+// renderPerPageStamps renders the stamp template once per page with $pdf vars
+// injected, returning N pdfutils stamp ops targeted to each page individually.
+func (r *Renderer) renderPerPageStamps(ctx context.Context, shortid string, data json.RawMessage, totalPages int) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, totalPages)
+	for i := 1; i <= totalPages; i++ {
+		perPageData, err := injectPdfVarsIntoData(data, i, totalPages)
+		if err != nil {
+			return nil, err
+		}
+		req := &Request{}
+		req.Template.Shortid = shortid
+		req.Data = perPageData
+		sub, err := r.renderLeaf(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("render page %d: %w", i, err)
+		}
+		if !strings.HasPrefix(sub.MimeType, "application/pdf") {
+			return nil, fmt.Errorf("per-page stamp must produce PDF (got %s)", sub.MimeType)
+		}
+		out = append(out, map[string]any{
+			"type":      "stamp",
+			"pdfBase64": base64.StdEncoding.EncodeToString(sub.Content),
+			"pages":     fmt.Sprintf("%d", i),
+		})
+	}
+	return out, nil
+}
+
+// injectPdfVarsIntoData merges {$pdf: {pageNumber, pages: {length, pageNumber}}}
+// into the user data so per-page stamp templates can substitute them via the
+// preprocessor in renderLeaf.
+func injectPdfVarsIntoData(data json.RawMessage, pageNum, totalPages int) (json.RawMessage, error) {
+	m := map[string]any{}
+	if len(data) > 0 {
+		if err := json.Unmarshal(data, &m); err != nil {
+			// Data wasn't an object — preserve under a key so we don't lose it.
+			m = map[string]any{}
+		}
+	}
+	m["$pdf"] = map[string]any{
+		"pageNumber": pageNum,
+		"pages": map[string]any{
+			"length":     totalPages,
+			"pageNumber": pageNum,
+		},
+	}
+	return json.Marshal(m)
+}
+
+// substitutePdfVars replaces jsreport-style {{$pdf.*}} placeholders in a raw
+// template string with concrete values. Called before the engine sees the
+// content so raymond never has to interpret `$pdf` as a variable name.
+func substitutePdfVars(content string, pageNum, totalPages int) string {
+	if content == "" {
+		return content
+	}
+	pn := fmt.Sprintf("%d", pageNum)
+	tp := fmt.Sprintf("%d", totalPages)
+	content = strings.ReplaceAll(content, "{{$pdf.pageNumber}}", pn)
+	content = strings.ReplaceAll(content, "{{$pdf.pages.pageNumber}}", pn)
+	content = strings.ReplaceAll(content, "{{$pdf.pages.length}}", tp)
+	return content
+}
+
+// asInt coerces an arbitrary JSON-decoded value into an int. JSON numbers
+// arrive as float64 from encoding/json by default; the pdf-vars map carries
+// integers semantically, so we cast appropriately.
+func asInt(v any) int {
+	switch x := v.(type) {
+	case int:
+		return x
+	case int64:
+		return int(x)
+	case float64:
+		return int(x)
+	case json.Number:
+		i, _ := x.Int64()
+		return int(i)
+	}
+	return 0
 }
 
 // renderLeaf runs the pipeline but skips pdfOperations (to avoid recursion).
@@ -548,6 +683,22 @@ func (r *Renderer) renderLeaf(ctx context.Context, req *Request) (*recipe.Result
 	var data any = map[string]any{}
 	if len(req.Data) > 0 {
 		_ = json.Unmarshal(req.Data, &data)
+	}
+	// jsreport pdf-utils compat: when the caller injected {$pdf: {pageNumber,
+	// pages: {length}}} into the data (per-page stamp renders), substitute
+	// {{$pdf.pageNumber}} / {{$pdf.pages.length}} in the template + CSS
+	// BEFORE Handlebars sees them — raymond doesn't recognise `$pdf` as a
+	// variable name and would silently emit empty strings.
+	if dataMap, ok := data.(map[string]any); ok {
+		if pdfVars, ok := dataMap["$pdf"].(map[string]any); ok {
+			pageNum := asInt(pdfVars["pageNumber"])
+			totalPages := 0
+			if pages, ok := pdfVars["pages"].(map[string]any); ok {
+				totalPages = asInt(pages["length"])
+			}
+			tpl.Content = substitutePdfVars(tpl.Content, pageNum, totalPages)
+			tpl.CSS = substitutePdfVars(tpl.CSS, pageNum, totalPages)
+		}
 	}
 	var helpers map[string]sandbox.HelperFn
 	if tpl.Helpers != "" {
