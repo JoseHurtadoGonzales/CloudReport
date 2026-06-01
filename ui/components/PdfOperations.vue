@@ -74,6 +74,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), { modelValue: () => [] })
 const emit = defineEmits<{ 'update:modelValue': [v: PdfOp[]] }>()
 
+const { t } = useI18n()
+
 const ops = computed<PdfOp[]>({
   get() {
     if (Array.isArray(props.modelValue)) return props.modelValue
@@ -85,15 +87,16 @@ const ops = computed<PdfOp[]>({
 // ────────────── tabs ──────────────
 type Tab = 'operations' | 'meta' | 'password' | 'sign' | 'pdfA' | 'accessibility' | 'compression'
 const tab = ref<Tab>('operations')
-const tabs: { id: Tab; label: string; icon: string }[] = [
-  { id: 'operations',     label: 'Operations',    icon: 'i-lucide-layers' },
-  { id: 'meta',           label: 'Meta',          icon: 'i-lucide-info' },
-  { id: 'password',       label: 'Password',      icon: 'i-lucide-lock' },
-  { id: 'sign',           label: 'Sign',          icon: 'i-lucide-signature' },
-  { id: 'pdfA',           label: 'PDF/A',         icon: 'i-lucide-shield-check' },
-  { id: 'accessibility',  label: 'Accessibility', icon: 'i-lucide-accessibility' },
-  { id: 'compression',    label: 'Compression',   icon: 'i-lucide-archive' },
-]
+// Labels are pulled at render time so locale switches re-evaluate.
+const tabs = computed(() => [
+  { id: 'operations'    as Tab, label: t('pdfops.tab.operations'),    icon: 'i-lucide-layers' },
+  { id: 'meta'          as Tab, label: t('pdfops.tab.meta'),          icon: 'i-lucide-info' },
+  { id: 'password'      as Tab, label: t('pdfops.tab.password'),      icon: 'i-lucide-lock' },
+  { id: 'sign'          as Tab, label: t('pdfops.tab.sign'),          icon: 'i-lucide-signature' },
+  { id: 'pdfA'          as Tab, label: t('pdfops.tab.pdfA'),          icon: 'i-lucide-shield-check' },
+  { id: 'accessibility' as Tab, label: t('pdfops.tab.accessibility'), icon: 'i-lucide-accessibility' },
+  { id: 'compression'   as Tab, label: t('pdfops.tab.compression'),   icon: 'i-lucide-archive' },
+])
 
 // ────────────── helpers ──────────────
 function addOp(op: PdfOp) {
@@ -218,24 +221,24 @@ const advancedOpenIdx = ref<number | null>(null)
     <!-- Title -->
     <div class="cr-pu-title">
       <span class="cr-pu-title-icon">PDF</span>
-      <h2>pdf utils configuration</h2>
+      <h2>{{ t('pdfops.title') }}</h2>
     </div>
 
     <!-- Quick actions -->
     <section class="cr-pu-section">
-      <p class="cr-pu-eyebrow">Quick actions</p>
+      <p class="cr-pu-eyebrow">{{ t('pdfops.quickActions') }}</p>
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
         <button class="cr-pu-quick" @click="quickAddHeaderFooter">
           <UIcon name="i-lucide-panel-top" class="w-4 h-4" />
-          <span>Add header/footer</span>
+          <span>{{ t('pdfops.addHeaderFooter') }}</span>
         </button>
         <button class="cr-pu-quick" @click="quickAddTOC">
           <UIcon name="i-lucide-list-tree" class="w-4 h-4" />
-          <span>Add Table of Contents</span>
+          <span>{{ t('pdfops.addTOC') }}</span>
         </button>
         <button class="cr-pu-quick" @click="quickAddCoverPage">
           <UIcon name="i-lucide-image" class="w-4 h-4" />
-          <span>Add cover page</span>
+          <span>{{ t('pdfops.addCover') }}</span>
         </button>
       </div>
     </section>
@@ -256,13 +259,14 @@ const advancedOpenIdx = ref<number | null>(null)
     <!-- ═══ Operations tab ═══ -->
     <section v-if="tab === 'operations'" class="cr-pu-section">
       <p class="text-[12.5px] mb-3" style="color: var(--cr-text-muted)">
-        Use merge/append/stamp operations to add dynamic headers, concatenate multiple PDFs, or insert cover pages.
-        Operations run <strong>top to bottom</strong>.
+        {{ t('pdfops.ops.hint') }} <strong>{{ t('pdfops.ops.hintBold') }}</strong>.
       </p>
 
       <div v-if="dynamicOps.length === 0" class="cr-pu-empty">
         <UIcon name="i-lucide-layers" class="w-10 h-10 mx-auto mb-2" style="color: var(--cr-text-soft)" />
-        <p class="text-[13px]" style="color: var(--cr-text-muted)">Sin operaciones. Empezá con un <strong>Quick action</strong> arriba.</p>
+        <p class="text-[13px]" style="color: var(--cr-text-muted)">
+          {{ t('pdfops.ops.empty') }} <strong>{{ t('pdfops.ops.emptyAction') }}</strong>.
+        </p>
       </div>
 
       <!-- Operations table -->
@@ -270,11 +274,11 @@ const advancedOpenIdx = ref<number | null>(null)
         <thead>
           <tr>
             <th></th>
-            <th>Tipo</th>
-            <th>Plantilla / Fuente</th>
-            <th>Modo</th>
-            <th style="width: 90px">Advanced</th>
-            <th style="width: 60px">Enabled</th>
+            <th>{{ t('pdfops.col.type') }}</th>
+            <th>{{ t('pdfops.col.template') }}</th>
+            <th>{{ t('pdfops.col.mode') }}</th>
+            <th style="width: 90px">{{ t('pdfops.col.advanced') }}</th>
+            <th style="width: 60px">{{ t('pdfops.col.enabled') }}</th>
             <th style="width: 32px"></th>
           </tr>
         </thead>
@@ -307,7 +311,7 @@ const advancedOpenIdx = ref<number | null>(null)
                   <template v-else>
                     <select :value="op.templateShortid" class="cr-input !pl-2 !py-1.5 !text-[12px] w-full"
                       @change="(e) => updateOp(i, { templateShortid: (e.target as HTMLSelectElement).value })">
-                      <option value="">— elegir —</option>
+                      <option value="">{{ t('pdfops.choose') }}</option>
                       <option v-for="t in pdfTemplates" :key="t.shortid" :value="t.shortid">{{ t.name }}</option>
                     </select>
                   </template>
@@ -431,11 +435,11 @@ const advancedOpenIdx = ref<number | null>(null)
       <details class="cr-pu-add">
         <summary>
           <UIcon name="i-lucide-plus" class="w-3.5 h-3.5" />
-          Add operation
+          {{ t('pdfops.addOperation') }}
         </summary>
         <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-3">
-          <button v-for="(m, t) in opMeta" :key="t" class="cr-pdfop-add"
-            @click="addOp({ type: t as PdfOpType, enabled: true })">
+          <button v-for="(m, opType) in opMeta" :key="opType" class="cr-pdfop-add"
+            @click="addOp({ type: opType as PdfOpType, enabled: true })">
             <span class="cr-pdfop-add-icon" :style="{ background: `${m.color}22`, color: m.color }">
               <UIcon :name="m.icon" class="w-4 h-4" />
             </span>

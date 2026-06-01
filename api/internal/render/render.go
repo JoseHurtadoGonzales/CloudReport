@@ -93,6 +93,16 @@ type Request struct {
 	Data    json.RawMessage `json:"data,omitempty"`
 	Options json.RawMessage `json:"options,omitempty"`
 	Context json.RawMessage `json:"context,omitempty"`
+
+	// pageOverride is set internally by per-page stamp rendering so the
+	// header/footer template inherits the parent document's page size.
+	// Not exposed in the public JSON body (unexported → invisible to
+	// json.Unmarshal).
+	pageOverride *pageOverride
+}
+
+type pageOverride struct {
+	size, orientation, margin string
 }
 
 // Result is what the renderer produces.
@@ -151,6 +161,15 @@ func (r *Renderer) Render(ctx context.Context, req *Request, user *models.User) 
 	}
 	if mutatedData != nil {
 		data = mutatedData
+	}
+
+	// Strip any `@page { size: ... }` rules from user content + CSS when
+	// the Página tab has a PageSize set. Chromium honours CSS @page size
+	// in some scenarios even with preferCSSPageSize=false, which silently
+	// overrides the user's choice in the Página tab.
+	if tpl.PageSize != "" {
+		tpl.Content = stripAtPageSize(tpl.Content)
+		tpl.CSS = stripAtPageSize(tpl.CSS)
 	}
 
 	// Inline-expand components referenced as {{> componentName}} (partials).
@@ -254,7 +273,12 @@ func (r *Renderer) Render(ctx context.Context, req *Request, user *models.User) 
 		// {{$pdf.pageNumber}} / {{$pdf.pages.length}} substitution in stamp
 		// templates (rendered once per page with those vars injected).
 		totalPages, _ := pdfapi.PageCount(bytes.NewReader(out.Content), nil)
-		resolved, rerr := r.resolveAppendTemplates(ctx, tpl.PdfOperations, req.Data, totalPages)
+		parentOverride := &pageOverride{
+			size:        tpl.PageSize,
+			orientation: tpl.PageOrientation,
+			margin:      "0", // stamps always render edge-to-edge so position:fixed inside the HTML lands on the page edge
+		}
+		resolved, rerr := r.resolveAppendTemplates(ctx, tpl.PdfOperations, req.Data, totalPages, parentOverride)
 		if rerr != nil {
 			r.finishProfile(ctx, prof, "error", rerr)
 			return nil, fmt.Errorf("appendTemplate: %w", rerr)
@@ -470,7 +494,7 @@ func injectStyles(html, css, size, orientation, margin string) string {
 // mirrors jsreport-pdf-utils' per-page rendering for header/footer use-cases.
 //
 // Keeps the pdfutils package free of any knowledge of the render pipeline.
-func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessage, data json.RawMessage, totalPages int) (json.RawMessage, error) {
+func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessage, data json.RawMessage, totalPages int, parentOverride *pageOverride) (json.RawMessage, error) {
 	if len(ops) == 0 {
 		return ops, nil
 	}
@@ -533,7 +557,7 @@ func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessa
 		}
 
 		if needsPerPage {
-			pageOps, err := r.renderPerPageStamps(ctx, shortid, data, totalPages)
+			pageOps, err := r.renderPerPageStamps(ctx, shortid, data, totalPages, parentOverride)
 			if err != nil {
 				return nil, fmt.Errorf("template %q: %w", shortid, err)
 			}
@@ -544,9 +568,14 @@ func (r *Renderer) resolveAppendTemplates(ctx context.Context, ops json.RawMessa
 
 		// Default path: single render, same data, no profiling, no further
 		// pdfOps to avoid infinite recursion if a template references itself.
+		// Stamps still inherit the parent's page size so the overlay
+		// dimensions match the target document.
 		req := &Request{}
 		req.Template.Shortid = shortid
 		req.Data = data
+		if nextType == "stamp" {
+			req.pageOverride = parentOverride
+		}
 		sub, err := r.renderLeaf(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("template %q: %w", shortid, err)
@@ -586,7 +615,9 @@ func templateReferencesPdfVars(content string) bool {
 
 // renderPerPageStamps renders the stamp template once per page with $pdf vars
 // injected, returning N pdfutils stamp ops targeted to each page individually.
-func (r *Renderer) renderPerPageStamps(ctx context.Context, shortid string, data json.RawMessage, totalPages int) ([]map[string]any, error) {
+// parentOverride propagates the main document's page size into each per-page
+// render so the overlay PDF matches the target page dimensions exactly.
+func (r *Renderer) renderPerPageStamps(ctx context.Context, shortid string, data json.RawMessage, totalPages int, parentOverride *pageOverride) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, totalPages)
 	for i := 1; i <= totalPages; i++ {
 		perPageData, err := injectPdfVarsIntoData(data, i, totalPages)
@@ -596,6 +627,7 @@ func (r *Renderer) renderPerPageStamps(ctx context.Context, shortid string, data
 		req := &Request{}
 		req.Template.Shortid = shortid
 		req.Data = perPageData
+		req.pageOverride = parentOverride
 		sub, err := r.renderLeaf(ctx, req)
 		if err != nil {
 			return nil, fmt.Errorf("render page %d: %w", i, err)
@@ -674,6 +706,33 @@ func (r *Renderer) renderLeaf(ctx context.Context, req *Request) (*recipe.Result
 		return nil, err
 	}
 	tpl.PdfOperations = nil // hard guard against recursion
+
+	// Per-page stamp rendering inherits the parent's page size so the
+	// overlay PDF always matches the target page dimensions. We mutate the
+	// resolved template's fields BEFORE option-picking so chrome.format,
+	// chrome.landscape and chrome.margin all derive from the override.
+	if req.pageOverride != nil {
+		if req.pageOverride.size != "" {
+			tpl.PageSize = req.pageOverride.size
+		}
+		if req.pageOverride.orientation != "" {
+			tpl.PageOrientation = req.pageOverride.orientation
+		}
+		if req.pageOverride.margin != "" {
+			tpl.PageMargin = req.pageOverride.margin
+		}
+	}
+
+	// Strip any `@page { size: ... }` rules from the user-supplied content
+	// and CSS when the template-level PageSize is set. Chromium honours
+	// CSS @page size even with preferCSSPageSize=false in some scenarios,
+	// causing the rendered PDF to ignore the format the user picked in the
+	// Página tab. We remove only the `size` descriptor — `margin` and other
+	// @page rules survive.
+	if tpl.PageSize != "" {
+		tpl.Content = stripAtPageSize(tpl.Content)
+		tpl.CSS = stripAtPageSize(tpl.CSS)
+	}
 
 	eng, err := engine.ByName(tpl.Engine)
 	if err != nil {
@@ -1239,10 +1298,24 @@ func (r *Renderer) resolveTemplateAssets(ctx context.Context, recipe string, opt
 // can always find their options regardless of how they look it up.
 func pickTemplateOptions(t *models.Template) map[string]json.RawMessage {
 	m := map[string]json.RawMessage{}
-	if len(t.Chrome) > 0 {
+
+	// Template-level page settings (Página tab) are the single source of
+	// truth for format / orientation / margins. We merge them INTO the
+	// recipe-specific JSONB so the worker sees a single, consistent set of
+	// options regardless of where the user edited them.
+	if t.Recipe == "chrome-pdf" {
+		merged := mergeChromeWithPageSettings(t.Chrome, t.PageSize, t.PageOrientation, t.PageMargin)
+		if len(merged) > 0 {
+			m["chrome"] = merged
+			m["chrome-pdf"] = merged // worker proxy lookup
+		}
+	} else if len(t.Chrome) > 0 {
+		// For non-chrome recipes, expose the JSONB as-is so other workers can
+		// still read it if they cross-reference (rare).
 		m["chrome"] = t.Chrome
-		m["chrome-pdf"] = t.Chrome // worker proxy lookup
+		m["chrome-pdf"] = t.Chrome
 	}
+
 	if len(t.WeasyPrint) > 0 {
 		m["weasyprint"] = t.WeasyPrint
 	}
@@ -1256,6 +1329,96 @@ func pickTemplateOptions(t *models.Template) map[string]json.RawMessage {
 		m["pptx"] = t.Pptx
 	}
 	return m
+}
+
+// mergeChromeWithPageSettings folds the template-level Página fields
+// (PageSize, PageOrientation, PageMargin) into the recipe's chrome JSONB.
+// Página tab wins over whatever may have been left in the JSONB by older
+// versions of the UI — there is only one place to edit these now.
+func mergeChromeWithPageSettings(chromeJSON json.RawMessage, pageSize, orientation, margin string) json.RawMessage {
+	var c map[string]any
+	if len(chromeJSON) > 0 {
+		_ = json.Unmarshal(chromeJSON, &c)
+	}
+	if c == nil {
+		c = map[string]any{}
+	}
+
+	if pageSize != "" {
+		c["format"] = pageSize
+		// When the Página tab specifies a size, it MUST win over whatever
+		// the user wrote in `@page { size: ... }` inside the template's
+		// CSS. Otherwise Chrome silently honours the CSS rule and the page
+		// renders in the wrong format (e.g. A4 instead of Letter).
+		c["preferCSSPageSize"] = false
+	}
+	// orientation is always set (even when "portrait" → landscape=false) so
+	// switching from landscape back to portrait actually flips the bit.
+	if orientation == "landscape" {
+		c["landscape"] = true
+	} else if orientation != "" {
+		c["landscape"] = false
+	}
+
+	if margin != "" {
+		top, right, bottom, left := parseFourSided(margin)
+		c["margin"] = map[string]any{
+			"top":    top,
+			"right":  right,
+			"bottom": bottom,
+			"left":   left,
+		}
+	}
+
+	out, _ := json.Marshal(c)
+	return out
+}
+
+// stripAtPageSizeRE matches `size: <whatever>;` (with optional surrounding
+// whitespace) inside CSS, so we can drop only the `size` descriptor from
+// `@page` blocks without touching `margin`, `marks`, etc.
+var stripAtPageSizeRE = regexp.MustCompile(`(?i)\bsize\s*:[^;{}]*;?`)
+
+// atPageBlockRE finds @page blocks (and named variants like @page :first) so
+// we can rewrite only the body, not random `size:` in unrelated selectors.
+var atPageBlockRE = regexp.MustCompile(`(?is)@page\b[^{]*\{[^}]*\}`)
+
+// stripAtPageSize removes any `size: <foo>;` rules from inside @page blocks.
+// The Página tab is the source of truth for page format; leaving the user's
+// `@page { size: A4 }` in the HTML/CSS causes Chromium to honour it and
+// silently override the Página tab choice.
+func stripAtPageSize(s string) string {
+	if s == "" || !strings.Contains(s, "@page") {
+		return s
+	}
+	return atPageBlockRE.ReplaceAllStringFunc(s, func(block string) string {
+		return stripAtPageSizeRE.ReplaceAllString(block, "")
+	})
+}
+
+// parseFourSided accepts CSS-style margin shorthand:
+//
+//	"1cm"             → 1cm on every side
+//	"1cm 2cm"         → 1cm vertical, 2cm horizontal
+//	"1cm 2cm 3cm"     → top=1cm, sides=2cm, bottom=3cm
+//	"1cm 2cm 3cm 4cm" → top, right, bottom, left
+//
+// Anything that doesn't match the 1-4 token shape falls through as the raw
+// value on every side, which matches how the chromium worker tolerates
+// "1cm" passed as a string in the older flow.
+func parseFourSided(s string) (string, string, string, string) {
+	parts := strings.Fields(strings.TrimSpace(s))
+	switch len(parts) {
+	case 1:
+		return parts[0], parts[0], parts[0], parts[0]
+	case 2:
+		return parts[0], parts[1], parts[0], parts[1]
+	case 3:
+		return parts[0], parts[1], parts[2], parts[1]
+	case 4:
+		return parts[0], parts[1], parts[2], parts[3]
+	}
+	return s, s, s, s
 }
 
 // ---- profile lifecycle ----

@@ -106,51 +106,25 @@ const recipeInfo = computed(() => {
 
     <!-- ═══════════════════════ chrome-pdf ═══════════════════════ -->
     <template v-if="recipe === 'chrome-pdf'">
+      <!-- Formato, orientación y márgenes viven en la pestaña Página (única fuente
+           de verdad). Acá sólo dejamos lo que es específico de Chrome PDF:
+           rango de páginas y, más abajo, Header/Footer y otros toggles. -->
       <Collapsible
         anchor-id="cr-section-page"
-        title="Página y márgenes"
-        description="Formato, orientación, márgenes por lado"
-        icon="i-lucide-layout-template"
-        :badge="activeCount('format','landscape','margin.top','margin.right','margin.bottom','margin.left','pageRanges')"
-        open
+        title="Rango de páginas"
+        description="Imprimir sólo un subconjunto del documento renderizado"
+        icon="i-lucide-list-ordered"
+        :badge="get('pageRanges') ? 'set' : ''"
       >
-        <div class="grid grid-cols-2 gap-3">
-          <div>
-            <label class="cr-label">Formato</label>
-            <CrSelect
-              :model-value="get('format', 'A4')"
-              :options="['A4','A3','A5','Letter','Legal','Tabloid','Ledger'].map(f => ({ value: f, label: f }))"
-              @update:model-value="(v) => patch({ format: v })"
-            />
-          </div>
-          <div>
-            <label class="cr-label">Orientación</label>
-            <label class="cr-switch !mt-2.5">
-              <input type="checkbox" :checked="!!get('landscape', false)" @change="(e) => patch({ landscape: (e.target as HTMLInputElement).checked })" />
-              <span class="cr-switch-track"><span class="cr-switch-thumb"></span></span>
-              <span class="cr-switch-label">Apaisado</span>
-            </label>
-          </div>
-        </div>
-
         <div>
-          <label class="cr-label">Márgenes por lado</label>
-          <div class="grid grid-cols-4 gap-2">
-            <input v-for="side in ['top','right','bottom','left']" :key="side"
-              type="text" :placeholder="side" :value="get(`margin.${side}`, '1cm')"
-              class="cr-input !pl-3 font-mono text-[12px]"
-              @input="(e) => setNested('margin', side, (e.target as HTMLInputElement).value)" />
-          </div>
-          <p class="text-[10.5px] mt-1" style="color: var(--cr-text-soft)">
-            Top · Right · Bottom · Left (ej. <code>1cm</code>, <code>10mm</code>, <code>0.5in</code>)
-          </p>
-        </div>
-
-        <div>
-          <label class="cr-label">Rango de páginas</label>
+          <label class="cr-label">Rango (formato: <code>1-5, 8, 11-13</code>)</label>
           <input type="text" :value="get('pageRanges', '')" placeholder="1-5, 8, 11-13"
             class="cr-input !pl-4 font-mono text-[13px]"
             @input="(e) => patch({ pageRanges: (e.target as HTMLInputElement).value })" />
+          <p class="text-[11px] mt-2 inline-flex items-center gap-1.5" style="color: var(--cr-text-soft)">
+            <UIcon name="i-lucide-info" class="w-3 h-3" />
+            Tamaño, orientación y márgenes se configuran en la pestaña <strong>Página</strong>.
+          </p>
         </div>
       </Collapsible>
 

@@ -492,6 +492,29 @@ const pageMargins = [
   { label: 'Ancho',      value: '2cm' },
 ]
 
+// Mirrors CSS shorthand: "1cm", "1cm 2cm", "1cm 2cm 3cm", or "1cm 2cm 3cm 4cm"
+// → always returns [top, right, bottom, left]
+function splitMargin(spec: string): [string, string, string, string] {
+  const parts = (spec || '').trim().split(/\s+/).filter(Boolean)
+  switch (parts.length) {
+    case 0: return ['', '', '', '']
+    case 1: return [parts[0], parts[0], parts[0], parts[0]]
+    case 2: return [parts[0], parts[1], parts[0], parts[1]]
+    case 3: return [parts[0], parts[1], parts[2], parts[1]]
+    default: return [parts[0], parts[1], parts[2], parts[3]]
+  }
+}
+
+// Replace one side (0=top, 1=right, 2=bottom, 3=left) in the shorthand,
+// collapsing to the shortest equivalent when all sides match.
+function updateMarginSide(spec: string, idx: number, value: string): string {
+  const arr = splitMargin(spec)
+  arr[idx] = value || '0'
+  if (arr[0] === arr[1] && arr[1] === arr[2] && arr[2] === arr[3]) return arr[0]
+  if (arr[0] === arr[2] && arr[1] === arr[3]) return `${arr[0]} ${arr[1]}`
+  return arr.join(' ')
+}
+
 function fmtSaved(d: Date | null) {
   if (!d) return ''
   const diff = (Date.now() - d.getTime()) / 1000
@@ -820,7 +843,31 @@ function profileEvents() {
                 <div class="flex flex-wrap gap-1.5 mb-2">
                   <button v-for="m in pageMargins" :key="m.value" class="cr-chip" :class="form.pageMargin === m.value ? 'cr-chip--active' : ''" @click="form.pageMargin = m.value">{{ m.label }}</button>
                 </div>
-                <input v-model="form.pageMargin" type="text" placeholder="1cm  ó  10px 20px 10px 20px" class="cr-input !pl-4 font-mono text-[13px]" />
+
+                <!-- Per-side inputs (top · right · bottom · left). Anything entered
+                     here is mirrored back into form.pageMargin in CSS shorthand. -->
+                <div class="grid grid-cols-4 gap-2 mt-2">
+                  <input
+                    v-for="(side, idx) in ['top','right','bottom','left']"
+                    :key="side"
+                    type="text"
+                    :placeholder="side"
+                    :value="splitMargin(form.pageMargin)[idx]"
+                    class="cr-input !pl-3 font-mono text-[12px]"
+                    @input="(e) => form.pageMargin = updateMarginSide(form.pageMargin, idx, (e.target as HTMLInputElement).value)"
+                  />
+                </div>
+                <p class="text-[10.5px] mt-1" style="color: var(--cr-text-soft)">
+                  Top · Right · Bottom · Left (ej. <code>1cm</code>, <code>10mm</code>, <code>0.5in</code>)
+                </p>
+
+                <!-- Free-form shorthand, for power users -->
+                <input
+                  v-model="form.pageMargin"
+                  type="text"
+                  placeholder="1cm  ó  10px 20px 10px 20px"
+                  class="cr-input !pl-4 font-mono text-[13px] mt-2"
+                />
               </div>
 
               <!-- Report retention -->
