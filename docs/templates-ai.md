@@ -5,8 +5,9 @@ renderice plantillas de Cloud-Report usando una **API key**. Está pensada para
 pegarse como contexto en el prompt de la IA.
 
 > **Auth:** todas las llamadas usan el header `x-api-key: cr_<prefix>_<secret>`.
-> Una API key tiene **los mismos permisos que el usuario que la creó**. Generala
-> en la UI: *Configuración → API Keys*.
+> Una API key tiene **los mismos permisos que el usuario que la creó**, salvo la
+> gestión de usuarios (bloqueada). Generala en la UI: *Configuración → API Keys*.
+> Detalle completo de permisos en **[api-keys.md](./api-keys.md)**.
 
 > **Base URL:** detrás de Caddy es `https://<host>:8443`. El certificado en LAN
 > es autofirmado, por eso los ejemplos usan `curl -k`.

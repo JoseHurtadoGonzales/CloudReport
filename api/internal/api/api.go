@@ -36,9 +36,10 @@ func Register(app *fiber.App, d *Deps) {
 	app.Post("/api/auth/login", LoginHandler(d))
 	app.Post("/api/auth/logout", LogoutHandler())
 
-	// API keys (require user JWT, not API key, to prevent infinite recursion of
-	// privilege escalation).
-	apiKeys := app.Group("/api/apikeys", d.Auth.Required())
+	// API keys (require user JWT, not API key, to prevent privilege escalation:
+	// a key must not be able to mint or revoke other keys). RejectAPIKey 403s
+	// any request on this group that authenticated with an API key.
+	apiKeys := app.Group("/api/apikeys", d.Auth.Required(), d.Auth.RejectAPIKey())
 	apiKeys.Get("/", ListAPIKeysHandler(d))
 	apiKeys.Post("/", CreateAPIKeyHandler(d))
 	apiKeys.Delete("/:id", RevokeAPIKeyHandler(d))
