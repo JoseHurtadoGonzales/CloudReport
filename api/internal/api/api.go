@@ -46,13 +46,16 @@ func Register(app *fiber.App, d *Deps) {
 	// Authenticated user info
 	app.Get("/api/current-user", d.Auth.Required(), CurrentUserHandler())
 	app.Post("/api/auth/refresh", d.Auth.Required(), RefreshHandler(d))
-	app.Post("/api/users/:shortid/password", d.Auth.Required(), ChangePasswordHandler(d))
+	// User-management endpoints are JWT-only: an API key must not be able to
+	// touch users (create / edit / delete / change password). RejectAPIKey
+	// runs after Required() and 403s any API-key-authenticated request.
+	app.Post("/api/users/:shortid/password", d.Auth.Required(), d.Auth.RejectAPIKey(), ChangePasswordHandler(d))
 
 	// Admin-only user management. Handlers check `actor.IsAdmin` themselves
 	// since we don't have a separate middleware for that yet.
-	app.Post("/api/admin/users",            d.Auth.Required(), AdminCreateUserHandler(d))
-	app.Patch("/api/admin/users/:shortid",  d.Auth.Required(), AdminPatchUserHandler(d))
-	app.Delete("/api/admin/users/:shortid", d.Auth.Required(), AdminDeleteUserHandler(d))
+	app.Post("/api/admin/users",            d.Auth.Required(), d.Auth.RejectAPIKey(), AdminCreateUserHandler(d))
+	app.Patch("/api/admin/users/:shortid",  d.Auth.Required(), d.Auth.RejectAPIKey(), AdminPatchUserHandler(d))
+	app.Delete("/api/admin/users/:shortid", d.Auth.Required(), d.Auth.RejectAPIKey(), AdminDeleteUserHandler(d))
 
 	// Settings & metadata (open with optional auth)
 	app.Get("/api/settings", d.Auth.Optional(), SettingsHandler())

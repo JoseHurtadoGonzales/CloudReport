@@ -1,8 +1,11 @@
 package odata
 
 import (
+	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	"github.com/gofiber/fiber/v2"
 )
 
 func TestToJSReportOne(t *testing.T) {
@@ -311,4 +314,37 @@ func TestParse(t *testing.T) {
 			t.Error("expected error for negative top")
 		}
 	})
+}
+
+func TestUsersGuard(t *testing.T) {
+	app := fiber.New()
+	ok := func(c *fiber.Ctx) error { return c.SendStatus(200) }
+	app.Get("/odata/:set", usersGuard, ok)
+	app.Post("/odata/:set", usersGuard, ok)
+	app.Delete("/odata/:set/:shortid", usersGuard, ok)
+
+	cases := []struct {
+		name, method, path, apiKey string
+		want                       int
+	}{
+		{"read users con JWT (sin key) OK", "GET", "/odata/users", "", 200},
+		{"read users con API key 403", "GET", "/odata/users", "cr_x_y", 403},
+		{"write users (POST) 403 para todos", "POST", "/odata/users", "", 403},
+		{"delete users 403", "DELETE", "/odata/users/abc", "", 403},
+		{"otra entidad con API key OK", "GET", "/odata/templates", "cr_x_y", 200},
+		{"otra entidad write OK", "POST", "/odata/templates", "", 200},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		if tc.apiKey != "" {
+			req.Header.Set("x-api-key", tc.apiKey)
+		}
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if resp.StatusCode != tc.want {
+			t.Errorf("%s: got %d, want %d", tc.name, resp.StatusCode, tc.want)
+		}
+	}
 }

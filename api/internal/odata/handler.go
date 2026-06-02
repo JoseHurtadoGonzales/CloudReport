@@ -2,6 +2,7 @@ package odata
 
 import (
 	"encoding/json"
+	"strings"
 
 	"github.com/cloudreport/api/internal/auth"
 	"github.com/cloudreport/api/internal/store"
@@ -10,12 +11,36 @@ import (
 
 // Handler registers `/odata/:entitySet` routes for every known entity.
 func Register(app fiber.Router, db *store.Store) {
-	app.Get("/odata/:set", listHandler(db))
-	app.Get("/odata/:set/:shortid", getHandler(db))
-	app.Post("/odata/:set", insertHandler(db))
-	app.Patch("/odata/:set/:shortid", updateHandler(db))
-	app.Put("/odata/:set/:shortid", updateHandler(db))
-	app.Delete("/odata/:set/:shortid", deleteHandler(db))
+	g := usersGuard
+	app.Get("/odata/:set", g, listHandler(db))
+	app.Get("/odata/:set/:shortid", g, getHandler(db))
+	app.Post("/odata/:set", g, insertHandler(db))
+	app.Patch("/odata/:set/:shortid", g, updateHandler(db))
+	app.Put("/odata/:set/:shortid", g, updateHandler(db))
+	app.Delete("/odata/:set/:shortid", g, deleteHandler(db))
+}
+
+// usersGuard protects the `users` entity over OData:
+//   - API keys can do NOTHING with users (any method → 403). User management
+//     is reserved for real logged-in sessions.
+//   - users are read-only via OData for everyone; writes go through the
+//     dedicated /api/admin/users handlers. Any write here → 403.
+//
+// It targets only the `users` set, so every other entity behaves unchanged.
+// API-key detection is by the presence of the `x-api-key` header (the OData
+// routes don't run the auth middleware, so we can't rely on context here).
+func usersGuard(c *fiber.Ctx) error {
+	if c.Params("set") != "users" {
+		return c.Next()
+	}
+	if strings.TrimSpace(c.Get("x-api-key")) != "" {
+		return c.Status(403).JSON(fiber.Map{"error": "las API keys no pueden acceder a la entidad users"})
+	}
+	switch c.Method() {
+	case fiber.MethodPost, fiber.MethodPatch, fiber.MethodPut, fiber.MethodDelete:
+		return c.Status(403).JSON(fiber.Map{"error": "users es de solo lectura vía OData; usá /api/admin/users"})
+	}
+	return c.Next()
 }
 
 func specFor(c *fiber.Ctx) (store.EntitySpec, bool) {
