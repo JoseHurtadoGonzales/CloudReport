@@ -19,10 +19,17 @@ import (
 func SchemaHandler() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		set := c.Params("set")
-		spec, ok := store.EntitySpecs[set]
-		if !ok {
+		if _, ok := store.EntitySpecs[set]; !ok {
 			return c.Status(404).JSON(fiber.Map{"error": "unknown entity set"})
 		}
+		// `templates` ships a rich, hand-authored schema so AI agents (and the
+		// /docs UI) know the real camelCase field names, valid recipe/engine
+		// values, descriptions and a ready-to-POST example. Other sets fall
+		// back to a generic property list.
+		if set == "templates" {
+			return c.JSON(templatesSchema())
+		}
+		spec := store.EntitySpecs[set]
 		props := fiber.Map{}
 		for _, col := range spec.Columns {
 			props[col] = fiber.Map{"type": "string"}
@@ -32,6 +39,56 @@ func SchemaHandler() fiber.Handler {
 			"type":       "object",
 			"properties": props,
 		})
+	}
+}
+
+// templatesSchema returns a detailed JSON-Schema (draft-07) for the template
+// entity, aimed at letting an AI build a valid `POST /odata/templates` body
+// (or a `POST /api/report` template) without guessing field names or enums.
+func templatesSchema() fiber.Map {
+	str := func(desc string) fiber.Map { return fiber.Map{"type": "string", "description": desc} }
+	return fiber.Map{
+		"$schema":     "http://json-schema.org/draft-07/schema#",
+		"title":       "Template",
+		"type":        "object",
+		"description": "Una plantilla de Cloud-Report. Creá una con POST /odata/templates y renderizala con POST /api/report. Los campos van en camelCase.",
+		"required":    []string{"name", "engine", "recipe"},
+		"properties": fiber.Map{
+			"name":   str("Nombre visible de la plantilla. Requerido."),
+			"engine": fiber.Map{"type": "string", "enum": []string{"handlebars", "none"}, "default": "handlebars", "description": "Motor de plantillas. 'handlebars' interpola {{variables}}; 'none' deja el contenido tal cual."},
+			"recipe": fiber.Map{"type": "string", "enum": []string{"chrome-pdf", "weasyprint", "docx", "pptx", "xlsx", "html-to-xlsx", "html", "text", "static-pdf"}, "default": "chrome-pdf", "description": "Formato de salida. chrome-pdf/weasyprint=PDF desde HTML; docx/pptx requieren un asset-plantilla (ver campos docx/pptx); html-to-xlsx=Excel desde tablas HTML; html/text=crudo."},
+			"content": str("Cuerpo de la plantilla. HTML (con {{vars}} de Handlebars) para recetas web. Para docx/pptx el contenido real viene del asset-plantilla, no de acá."),
+			"helpers": str("JavaScript con helpers de Handlebars, ej: function upper(s){ return s.toUpperCase() }. Corren en sandbox."),
+			"css":     str("Estilos CSS aplicados al render (se inyectan en el HTML)."),
+			"pageSize":        fiber.Map{"type": "string", "enum": []string{"A4", "A3", "A5", "Letter", "Legal", "Tabloid"}, "default": "A4", "description": "Tamaño de página (recetas PDF)."},
+			"pageOrientation": fiber.Map{"type": "string", "enum": []string{"portrait", "landscape"}, "default": "portrait", "description": "Orientación de página (recetas PDF)."},
+			"pageMargin":      str("Margen de página, ej '1cm' o '20px'. Aplica a recetas PDF."),
+			"chrome":        fiber.Map{"type": "object", "description": "Opciones de chrome-pdf. Ej: {\"landscape\":false,\"printBackground\":true,\"marginTop\":\"1cm\",\"headerTemplate\":\"<div>...</div>\",\"footerTemplate\":\"<div>...</div>\",\"displayHeaderFooter\":true}"},
+			"weasyprint":    fiber.Map{"type": "object", "description": "Opciones de la receta weasyprint (PDF alternativo, mejor soporte de CSS print)."},
+			"docx":          fiber.Map{"type": "object", "description": "Receta docx. Requiere {\"templateAsset\":{\"shortid\":\"<assetShortid>\"}} apuntando a un .docx subido como asset, con marcadores de docxtpl ({{var}})."},
+			"xlsx":          fiber.Map{"type": "object", "description": "Opciones de la receta xlsx."},
+			"pptx":          fiber.Map{"type": "object", "description": "Receta pptx. Requiere {\"templateAsset\":{\"shortid\":\"<assetShortid>\"}} apuntando a un .pptx subido como asset."},
+			"pdfOperations": fiber.Map{"type": "array", "description": "Operaciones de pdf-utils. Cada item: {\"type\":\"merge|append|prepend\",\"templateShortid\":\"...\",\"renderForEveryPage\":true}. Sirve para estampar headers/footers o concatenar PDFs."},
+			"dataShortid":         str("shortid de una entidad 'data' (JSON de ejemplo) asociada para preview/diseño."),
+			"reportRetentionDays": fiber.Map{"type": "integer", "default": 30, "description": "Días que se guardan los reportes generados antes de borrarse. 0 = no borrar nunca."},
+			"folder":              fiber.Map{"type": []string{"string", "null"}, "description": "shortid de la carpeta contenedora, o null para raíz."},
+			"isPublic":            fiber.Map{"type": "boolean", "default": false, "description": "Si true, el template puede renderizarse sin autenticación."},
+			"readPermissions":     fiber.Map{"type": "array", "items": fiber.Map{"type": "string"}, "description": "IDs de usuarios/grupos con permiso de lectura. Vacío = abierto a autenticados."},
+			"editPermissions":     fiber.Map{"type": "array", "items": fiber.Map{"type": "string"}, "description": "IDs de usuarios/grupos con permiso de edición."},
+		},
+		"examples": []fiber.Map{
+			{
+				"name":            "Factura PDF",
+				"engine":          "handlebars",
+				"recipe":          "chrome-pdf",
+				"content":         "<h1>Factura {{number}}</h1>\n<p>Cliente: {{client.name}}</p>\n<table>{{#each items}}<tr><td>{{name}}</td><td>{{price}}</td></tr>{{/each}}</table>\n<p>Total: {{total}}</p>",
+				"css":             "h1{color:#0b5} table{width:100%}",
+				"pageSize":        "A4",
+				"pageOrientation": "portrait",
+				"pageMargin":      "1cm",
+				"chrome":          fiber.Map{"printBackground": true},
+			},
+		},
 	}
 }
 
