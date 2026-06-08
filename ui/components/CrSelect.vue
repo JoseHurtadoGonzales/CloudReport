@@ -45,6 +45,10 @@ const open = ref(false)
 const query = ref('')
 const activeIdx = ref(0)
 const dropUp = ref(false)
+// The panel is teleported to <body> so it can never be clipped by an
+// overflow-hidden ancestor (e.g. the table card). These hold its fixed
+// position, recomputed from the trigger rect on open / scroll / resize.
+const panelStyle = ref<Record<string, string>>({})
 
 const filtered = computed(() => {
   if (!props.searchable || !query.value.trim()) return props.options
@@ -64,27 +68,45 @@ function toggleOpen() {
   open.value ? close() : openPanel()
 }
 
+// Compute the panel's fixed position from the trigger rect, flipping upward
+// when there's not enough room below.
+function reposition() {
+  const rect = trigger.value?.getBoundingClientRect()
+  if (!rect) return
+  const estimated = Math.min(320, props.options.length * 38 + (props.searchable ? 44 : 0) + 8)
+  const below = window.innerHeight - rect.bottom
+  if (props.placement === 'top') dropUp.value = true
+  else if (props.placement === 'bottom') dropUp.value = false
+  else dropUp.value = below < estimated && rect.top > below
+
+  const style: Record<string, string> = {
+    position: 'fixed',
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    right: 'auto',
+    zIndex: '70',
+  }
+  if (dropUp.value) {
+    style.bottom = `${window.innerHeight - rect.top + 6}px`
+    style.top = 'auto'
+    style.maxHeight = `${Math.max(120, rect.top - 12)}px`
+  } else {
+    style.top = `${rect.bottom + 6}px`
+    style.bottom = 'auto'
+    style.maxHeight = `${Math.max(120, below - 12)}px`
+  }
+  panelStyle.value = style
+}
+
 function openPanel() {
   open.value = true
   query.value = ''
-  // Decide direction so the popup never gets clipped by an overflow-hidden
-  // ancestor (e.g. the paginated table footer).
-  if (props.placement === 'top') {
-    dropUp.value = true
-  } else if (props.placement === 'bottom') {
-    dropUp.value = false
-  } else {
-    const rect = trigger.value?.getBoundingClientRect()
-    if (rect) {
-      const estimated = Math.min(320, props.options.length * 38 + (props.searchable ? 44 : 0) + 8)
-      const below = window.innerHeight - rect.bottom
-      dropUp.value = below < estimated && rect.top > below
-    }
-  }
+  reposition()
   // Highlight the currently selected option.
   const idx = props.options.findIndex(o => o.value === props.modelValue)
   activeIdx.value = idx >= 0 ? idx : 0
   nextTick(() => {
+    reposition()
     if (props.searchable) searchInput.value?.focus()
     else trigger.value?.focus()
     scrollActiveIntoView()
@@ -139,15 +161,34 @@ function scrollActiveIntoView() {
 }
 
 function onDocClick(e: MouseEvent) {
-  if (!root.value) return
-  if (!root.value.contains(e.target as Node)) close()
+  const target = e.target as Node
+  // The panel is teleported out of `root`, so check it explicitly too.
+  if (root.value?.contains(target) || panel.value?.contains(target)) return
+  close()
+}
+
+// Reposition while scrolling/resizing so the teleported panel tracks the
+// trigger; if the trigger scrolls fully out of view we keep it glued anyway.
+function onReflow() {
+  if (open.value) reposition()
 }
 
 watch(open, (v) => {
-  if (v) document.addEventListener('mousedown', onDocClick)
-  else document.removeEventListener('mousedown', onDocClick)
+  if (v) {
+    document.addEventListener('mousedown', onDocClick)
+    window.addEventListener('scroll', onReflow, true)
+    window.addEventListener('resize', onReflow)
+  } else {
+    document.removeEventListener('mousedown', onDocClick)
+    window.removeEventListener('scroll', onReflow, true)
+    window.removeEventListener('resize', onReflow)
+  }
 })
-onBeforeUnmount(() => document.removeEventListener('mousedown', onDocClick))
+onBeforeUnmount(() => {
+  document.removeEventListener('mousedown', onDocClick)
+  window.removeEventListener('scroll', onReflow, true)
+  window.removeEventListener('resize', onReflow)
+})
 
 // Re-highlight active row as the query narrows the list.
 watch(query, () => { activeIdx.value = 0 })
@@ -176,6 +217,7 @@ watch(query, () => { activeIdx.value = 0 })
       />
     </button>
 
+    <Teleport to="body">
     <Transition
       enter-active-class="transition-all duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]"
       leave-active-class="transition-all duration-120"
@@ -187,6 +229,7 @@ watch(query, () => { activeIdx.value = 0 })
         ref="panel"
         class="cr-select-panel"
         :class="{ 'cr-select-panel--up': dropUp }"
+        :style="panelStyle"
         role="listbox"
         @keydown="onPanelKey"
       >
@@ -231,6 +274,7 @@ watch(query, () => { activeIdx.value = 0 })
         </div>
       </div>
     </Transition>
+    </Teleport>
   </div>
 </template>
 
