@@ -345,7 +345,54 @@ func (r *Renderer) persistReport(tpl *models.Template, out *recipe.Result, user 
 			payload["expires_at"] = time.Now().Add(time.Duration(tpl.ReportRetentionDays) * 24 * time.Hour)
 		}
 		_, _ = r.db.InsertGeneric(ctx, store.EntitySpecs["reports"], payload)
+		// Enforce the hard cap so history never grows past MaxHistoryRows.
+		r.capReports(ctx)
 	}()
+}
+
+// MaxHistoryRows is the hard cap on how many reports / profiles are kept.
+// Once exceeded, the oldest rows (and their blobs) are deleted so only the
+// newest MaxHistoryRows remain.
+const MaxHistoryRows = 200
+
+// capReports trims the `reports` table to the newest MaxHistoryRows rows,
+// purging each deleted row's blob first. Best-effort.
+func (r *Renderer) capReports(ctx context.Context) {
+	over, err := r.db.OverflowReports(ctx, MaxHistoryRows)
+	if err != nil || len(over) == 0 {
+		return
+	}
+	shortids := make([]string, 0, len(over))
+	for _, e := range over {
+		if e.BlobKey != "" && r.blob != nil {
+			_ = r.blob.Delete(ctx, e.BlobKey)
+		}
+		shortids = append(shortids, e.Shortid)
+	}
+	_ = r.db.DeleteReportsByShortid(ctx, shortids)
+}
+
+// capProfiles trims the `profiles` table to the newest MaxHistoryRows rows.
+func (r *Renderer) capProfiles(ctx context.Context) {
+	over, err := r.db.OverflowProfiles(ctx, MaxHistoryRows)
+	if err != nil || len(over) == 0 {
+		return
+	}
+	shortids := make([]string, 0, len(over))
+	for _, e := range over {
+		if e.BlobKey != "" && r.blob != nil {
+			_ = r.blob.Delete(ctx, e.BlobKey)
+		}
+		shortids = append(shortids, e.Shortid)
+	}
+	_ = r.db.DeleteProfilesByShortid(ctx, shortids)
+}
+
+// EnforceHistoryCap trims both reports and profiles to MaxHistoryRows. Invoked
+// by the cleanup ticker (boot + hourly) as a backstop to the per-insert caps.
+func (r *Renderer) EnforceHistoryCap(ctx context.Context) {
+	r.capReports(ctx)
+	r.capProfiles(ctx)
 }
 
 // SweepExpiredReports deletes reports whose retention window has elapsed:
@@ -1443,6 +1490,13 @@ func (r *Renderer) startProfile(ctx context.Context, t *models.Template, u *mode
 	if v, ok := out["shortid"].(string); ok {
 		p.Shortid = v
 	}
+	// Enforce the hard cap on profile history (detached so it never blocks or
+	// fails the render that just started).
+	go func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		r.capProfiles(cctx)
+	}()
 	return p, nil
 }
 

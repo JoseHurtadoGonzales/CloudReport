@@ -93,6 +93,8 @@ func main() {
 			} else if n > 0 {
 				log.Info().Int("deleted", n).Msg("report retention sweep")
 			}
+			// Hard-cap reports + profiles to the newest MaxHistoryRows.
+			renderer.EnforceHistoryCap(ctx)
 		}
 		sweep()
 		ticker := time.NewTicker(time.Hour)

@@ -17,6 +17,12 @@ interface Props {
   selectable?: boolean
   /** Label for the built-in bulk delete button. */
   bulkDeleteLabel?: string
+  /** Enable client-side pagination (footer pager + page-size selector). */
+  paginate?: boolean
+  /** Initial rows per page. */
+  pageSize?: number
+  /** Selectable page sizes shown in the footer dropdown. */
+  pageSizeOptions?: number[]
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -26,6 +32,9 @@ const props = withDefaults(defineProps<Props>(), {
   emptyIcon: 'i-lucide-inbox',
   selectable: false,
   bulkDeleteLabel: 'Eliminar seleccionados',
+  paginate: true,
+  pageSize: 10,
+  pageSizeOptions: () => [10, 25, 50, 100],
 })
 
 const emit = defineEmits<{
@@ -82,6 +91,58 @@ defineExpose({ clearSelection })
 
 // Total column count incl. the optional checkbox column (for empty/loading rows).
 const colCount = computed(() => props.columns.length + (props.selectable ? 1 : 0))
+
+// ── Pagination ───────────────────────────────────────────────────────
+const pageSize = ref(props.pageSize)
+const currentPage = ref(1)
+
+const totalPages = computed(() =>
+  props.paginate ? Math.max(1, Math.ceil(props.rows.length / pageSize.value)) : 1,
+)
+const offset = computed(() => (currentPage.value - 1) * pageSize.value)
+const pagedRows = computed(() =>
+  props.paginate ? props.rows.slice(offset.value, offset.value + pageSize.value) : props.rows,
+)
+function rowIndex(i: number) {
+  return props.paginate ? offset.value + i : i
+}
+
+const rangeFrom = computed(() => (props.rows.length === 0 ? 0 : offset.value + 1))
+const rangeTo = computed(() => Math.min(offset.value + pageSize.value, props.rows.length))
+
+const pageSizeSel = computed({
+  get: () => String(pageSize.value),
+  set: (v: string) => { pageSize.value = Number(v) || props.pageSize },
+})
+const pageSizeOpts = computed(() =>
+  props.pageSizeOptions.map(n => ({ value: String(n), label: `${n} / página` })),
+)
+
+// Windowed page buttons with ellipsis for long lists.
+const pageItems = computed<(number | string)[]>(() => {
+  const tp = totalPages.value
+  const cur = currentPage.value
+  if (tp <= 7) return Array.from({ length: tp }, (_, i) => i + 1)
+  const out: (number | string)[] = [1]
+  const start = Math.max(2, cur - 1)
+  const end = Math.min(tp - 1, cur + 1)
+  if (start > 2) out.push('…')
+  for (let p = start; p <= end; p++) out.push(p)
+  if (end < tp - 1) out.push('…')
+  out.push(tp)
+  return out
+})
+
+function goTo(p: number) {
+  currentPage.value = Math.min(Math.max(1, p), totalPages.value)
+}
+
+// Keep currentPage valid as rows shrink/grow (filter, delete) and reset when
+// the page size changes.
+watch(pageSize, () => { currentPage.value = 1 })
+watch(() => props.rows.length, () => {
+  if (currentPage.value > totalPages.value) currentPage.value = totalPages.value
+})
 </script>
 
 <template>
@@ -155,12 +216,12 @@ const colCount = computed(() => props.columns.length + (props.selectable ? 1 : 0
         </thead>
         <tbody>
           <tr
-            v-for="(row, i) in rows"
-            :key="row._id ?? row.id ?? row.shortid ?? i"
+            v-for="(row, i) in pagedRows"
+            :key="row._id ?? row.id ?? row.shortid ?? rowIndex(i)"
             class="cr-row"
             :class="[
               $slots.rowClick || $attrs.onRowClick ? 'cursor-pointer' : '',
-              selectable && selected.has(keyOf(row, i)) ? 'cr-row--selected' : '',
+              selectable && selected.has(keyOf(row, rowIndex(i))) ? 'cr-row--selected' : '',
             ]"
             @click="$emit('rowClick', row)"
           >
@@ -168,9 +229,9 @@ const colCount = computed(() => props.columns.length + (props.selectable ? 1 : 0
               <input
                 type="checkbox"
                 class="cr-checkbox"
-                :checked="selected.has(keyOf(row, i))"
-                :aria-label="`Seleccionar fila ${i + 1}`"
-                @change="toggleRow(row, i)"
+                :checked="selected.has(keyOf(row, rowIndex(i)))"
+                :aria-label="`Seleccionar fila ${rowIndex(i) + 1}`"
+                @change="toggleRow(row, rowIndex(i))"
               />
             </td>
             <td
@@ -186,6 +247,47 @@ const colCount = computed(() => props.columns.length + (props.selectable ? 1 : 0
           </tr>
         </tbody>
       </table>
+    </div>
+
+    <!-- Pagination footer -->
+    <div
+      v-if="paginate && !loading && rows.length > 0"
+      class="cr-pager"
+    >
+      <div class="cr-pager-info">
+        <span>{{ rangeFrom }}–{{ rangeTo }} de {{ rows.length }}</span>
+        <div class="cr-pager-size">
+          <CrSelect v-model="pageSizeSel" :options="pageSizeOpts" />
+        </div>
+      </div>
+
+      <div v-if="totalPages > 1" class="cr-pager-nav">
+        <button
+          class="cr-pager-btn"
+          :disabled="currentPage === 1"
+          aria-label="Página anterior"
+          @click="goTo(currentPage - 1)"
+        >
+          <UIcon name="i-lucide-chevron-left" class="w-4 h-4" />
+        </button>
+        <template v-for="(p, idx) in pageItems" :key="idx">
+          <span v-if="p === '…'" class="cr-pager-ellipsis">…</span>
+          <button
+            v-else
+            class="cr-pager-btn"
+            :class="p === currentPage ? 'cr-pager-btn--active' : ''"
+            @click="goTo(p as number)"
+          >{{ p }}</button>
+        </template>
+        <button
+          class="cr-pager-btn"
+          :disabled="currentPage === totalPages"
+          aria-label="Página siguiente"
+          @click="goTo(currentPage + 1)"
+        >
+          <UIcon name="i-lucide-chevron-right" class="w-4 h-4" />
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -244,4 +346,66 @@ html.dark .cr-bulkbar {
 }
 .cr-bulkbar-delete:hover { background: #b9272d; }
 .cr-bulkbar-delete:active { transform: scale(0.97); }
+
+/* Pagination footer */
+.cr-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+  border-top: 1px solid var(--cr-border);
+}
+.cr-pager-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--cr-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.cr-pager-size {
+  width: 130px;
+}
+.cr-pager-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cr-pager-btn {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--cr-text-muted);
+  border: 1px solid transparent;
+  transition: background-color 120ms, color 120ms, border-color 120ms;
+}
+.cr-pager-btn:hover:not(:disabled) {
+  background: var(--cr-surface-soft);
+  color: var(--cr-text);
+}
+.cr-pager-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.cr-pager-btn--active {
+  background: var(--cr-surface-soft);
+  border-color: var(--cr-border-strong);
+  color: var(--cr-text);
+}
+html.dark .cr-pager-btn--active {
+  background: rgb(255 255 255 / 0.06);
+}
+.cr-pager-ellipsis {
+  padding: 0 4px;
+  color: var(--cr-text-soft);
+  font-size: 12.5px;
+}
 </style>

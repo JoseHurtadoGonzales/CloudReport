@@ -313,6 +313,63 @@ func (s *Store) DeleteReportsByShortid(ctx context.Context, shortids []string) e
 	return err
 }
 
+// DeleteProfilesByShortid removes profile rows in one statement.
+func (s *Store) DeleteProfilesByShortid(ctx context.Context, shortids []string) error {
+	if len(shortids) == 0 {
+		return nil
+	}
+	_, err := s.Pool.Exec(ctx, `DELETE FROM profiles WHERE shortid = ANY($1)`, shortids)
+	return err
+}
+
+// BlobRef pairs a row's shortid with its blob_key so the caller can purge the
+// stored file before deleting the row.
+type BlobRef struct {
+	Shortid string
+	BlobKey string
+}
+
+func scanBlobRefs(rows pgx.Rows) ([]BlobRef, error) {
+	defer rows.Close()
+	var out []BlobRef
+	for rows.Next() {
+		var r BlobRef
+		if err := rows.Scan(&r.Shortid, &r.BlobKey); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// OverflowReports returns every report beyond the newest `keep` (ordered by
+// created_at DESC). Used to enforce a hard cap on stored report history.
+func (s *Store) OverflowReports(ctx context.Context, keep int) ([]BlobRef, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT shortid, COALESCE(blob_key, '')
+		FROM reports
+		ORDER BY created_at DESC
+		OFFSET $1`, keep)
+	if err != nil {
+		return nil, err
+	}
+	return scanBlobRefs(rows)
+}
+
+// OverflowProfiles returns every profile beyond the newest `keep` (ordered by
+// started_at DESC). Used to enforce a hard cap on stored profile history.
+func (s *Store) OverflowProfiles(ctx context.Context, keep int) ([]BlobRef, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT shortid, COALESCE(blob_key, '')
+		FROM profiles
+		ORDER BY started_at DESC NULLS LAST
+		OFFSET $1`, keep)
+	if err != nil {
+		return nil, err
+	}
+	return scanBlobRefs(rows)
+}
+
 // encodeForSQL turns Go map/slice values into JSON bytes so pgx writes them
 // as JSONB literals (rather than trying to encode each element separately).
 // Strings and primitives are returned unchanged.
