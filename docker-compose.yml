@@ -162,6 +162,7 @@ services:
       context: ./api
       dockerfile: Dockerfile
     container_name: cr-api
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
@@ -198,6 +199,7 @@ services:
         # deploy, set NUXT_PUBLIC_API_BASE to the API's absolute browser URL.
         NUXT_PUBLIC_API_BASE: "${NUXT_PUBLIC_API_BASE-}"
     container_name: cr-ui
+    restart: unless-stopped
     depends_on:
       - api
     environment:
