@@ -21,6 +21,9 @@ interface Props {
   disabled?: boolean
   /** Extra classes applied to the trigger button (lets callers tweak size). */
   triggerClass?: string
+  /** Where the popup opens. 'auto' flips upward when there's not enough room
+   *  below (e.g. a select inside a scroll/overflow-hidden footer). */
+  placement?: 'auto' | 'top' | 'bottom'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -28,6 +31,7 @@ const props = withDefaults(defineProps<Props>(), {
   searchable: false,
   disabled: false,
   triggerClass: '',
+  placement: 'bottom',
 })
 
 const emit = defineEmits<{ 'update:modelValue': [v: string] }>()
@@ -40,6 +44,7 @@ const searchInput = ref<HTMLInputElement | null>(null)
 const open = ref(false)
 const query = ref('')
 const activeIdx = ref(0)
+const dropUp = ref(false)
 
 const filtered = computed(() => {
   if (!props.searchable || !query.value.trim()) return props.options
@@ -62,6 +67,20 @@ function toggleOpen() {
 function openPanel() {
   open.value = true
   query.value = ''
+  // Decide direction so the popup never gets clipped by an overflow-hidden
+  // ancestor (e.g. the paginated table footer).
+  if (props.placement === 'top') {
+    dropUp.value = true
+  } else if (props.placement === 'bottom') {
+    dropUp.value = false
+  } else {
+    const rect = trigger.value?.getBoundingClientRect()
+    if (rect) {
+      const estimated = Math.min(320, props.options.length * 38 + (props.searchable ? 44 : 0) + 8)
+      const below = window.innerHeight - rect.bottom
+      dropUp.value = below < estimated && rect.top > below
+    }
+  }
   // Highlight the currently selected option.
   const idx = props.options.findIndex(o => o.value === props.modelValue)
   activeIdx.value = idx >= 0 ? idx : 0
@@ -167,6 +186,7 @@ watch(query, () => { activeIdx.value = 0 })
         v-if="open"
         ref="panel"
         class="cr-select-panel"
+        :class="{ 'cr-select-panel--up': dropUp }"
         role="listbox"
         @keydown="onPanelKey"
       >
@@ -295,6 +315,12 @@ html.dark .cr-select-panel {
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.4),
     0 14px 36px -8px rgb(0 0 0 / 0.55);
+}
+
+/* Open upward — used when there's no room below (e.g. table footer). */
+.cr-select-panel--up {
+  top: auto;
+  bottom: calc(100% + 6px);
 }
 
 .cr-select-search {

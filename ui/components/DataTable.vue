@@ -257,7 +257,7 @@ watch(() => props.rows.length, () => {
       <div class="cr-pager-info">
         <span>{{ rangeFrom }}–{{ rangeTo }} de {{ rows.length }}</span>
         <div class="cr-pager-size">
-          <CrSelect v-model="pageSizeSel" :options="pageSizeOpts" />
+          <CrSelect v-model="pageSizeSel" :options="pageSizeOpts" placement="auto" />
         </div>
       </div>
 
