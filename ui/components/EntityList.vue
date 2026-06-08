@@ -53,6 +53,29 @@ const search = ref('')
 const toDelete = ref<any>(null)
 const confirmOpen = ref(false)
 
+// Bulk delete
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkDelete(selected: any[]) {
+  bulkRows.value = selected
+  bulkConfirmOpen.value = true
+}
+async function doBulkDelete() {
+  const targets = bulkRows.value.slice()
+  let ok = 0
+  for (const row of targets) {
+    try {
+      await entity.remove(row.shortid)
+      rows.value = rows.value.filter(r => r.shortid !== row.shortid)
+      ok++
+    } catch (err: any) {
+      toasts.error(t('common.couldNotDelete'), extractError(err))
+    }
+  }
+  bulkRows.value = []
+  if (ok > 0) toasts.success(t('list.deleted'))
+}
+
 async function load() {
   loading.value = true
   try {
@@ -112,7 +135,10 @@ function fmt(iso?: string) {
       :loading="loading"
       :empty-title="`${t('list.empty')} — ${title.toLowerCase()}`"
       empty-icon="i-lucide-plus-circle"
+      selectable
+      :bulk-delete-label="t('list.delete')"
       @row-click="(row) => $router.push(`${newPath.replace('/new', '')}/${row.shortid}`)"
+      @bulk-delete="askBulkDelete"
     >
       <template #toolbar>
         <div class="relative flex-1 max-w-md">
@@ -162,6 +188,15 @@ function fmt(iso?: string) {
       destructive
       :confirm-label="t('list.delete')"
       @confirm="doDelete"
+    />
+
+    <ConfirmDialog
+      v-model="bulkConfirmOpen"
+      :title="t('list.deleteItem')"
+      :description="`${t('list.willDelete')} ${bulkRows.length} ${bulkRows.length === 1 ? 'elemento' : 'elementos'}.`"
+      destructive
+      :confirm-label="t('list.delete')"
+      @confirm="doBulkDelete"
     />
   </div>
 </template>

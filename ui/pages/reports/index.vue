@@ -42,6 +42,22 @@ async function doDelete() {
   finally { toDelete.value = null }
 }
 
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkDelete(selected: any[]) { bulkRows.value = selected; bulkConfirmOpen.value = true }
+async function doBulkDelete() {
+  let ok = 0
+  for (const row of bulkRows.value.slice()) {
+    try {
+      await reports.remove(row.shortid)
+      rows.value = rows.value.filter(r => r.shortid !== row.shortid)
+      ok++
+    } catch (err: any) { toasts.error(t('common.couldNotDelete'), extractError(err)) }
+  }
+  bulkRows.value = []
+  if (ok > 0) toasts.success(t('reports.deleted'))
+}
+
 function fmt(iso?: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString()
@@ -76,6 +92,9 @@ function fmtBytes(n?: number) {
       :empty-title="t('reports.empty')"
       :empty-description="t('reports.emptyDesc')"
       empty-icon="i-lucide-file-down"
+      selectable
+      :bulk-delete-label="t('list.delete')"
+      @bulk-delete="askBulkDelete"
     >
       <template #toolbar>
         <div class="relative flex-1 max-w-md">
@@ -120,5 +139,7 @@ function fmtBytes(n?: number) {
     </DataTable>
 
     <ConfirmDialog v-model="confirmOpen" :title="t('reports.confirmTitle')" :description="`${t('reports.confirmDesc')} &quot;${toDelete?.name ?? toDelete?.shortid}&quot;.`" destructive :confirm-label="t('list.delete')" @confirm="doDelete" />
+
+    <ConfirmDialog v-model="bulkConfirmOpen" :title="t('reports.confirmTitle')" :description="`${t('list.willDelete')} ${bulkRows.length} ${bulkRows.length === 1 ? 'reporte' : 'reportes'}.`" destructive :confirm-label="t('list.delete')" @confirm="doBulkDelete" />
   </div>
 </template>

@@ -103,6 +103,22 @@ async function doDelete() {
   toasts.success(t('list.deleted'))
 }
 
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkDelete(selected: any[]) { bulkRows.value = selected; bulkConfirmOpen.value = true }
+async function doBulkDelete() {
+  let ok = 0
+  for (const row of bulkRows.value.slice()) {
+    try {
+      await schedules.remove(row.shortid)
+      rows.value = rows.value.filter(r => r.shortid !== row.shortid)
+      ok++
+    } catch (err: any) { toasts.error(t('common.couldNotDelete'), extractError(err)) }
+  }
+  bulkRows.value = []
+  if (ok > 0) toasts.success(t('list.deleted'))
+}
+
 function fmt(iso?: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString()
@@ -138,6 +154,9 @@ function fmt(iso?: string) {
       :empty-title="t('schedules.empty')"
       :empty-description="t('schedules.emptyDesc')"
       empty-icon="i-lucide-calendar-clock"
+      selectable
+      :bulk-delete-label="t('list.delete')"
+      @bulk-delete="askBulkDelete"
     >
       <template #cell-name="{ row }">
         <div class="font-semibold" style="color: var(--cr-text)">{{ row.name }}</div>
@@ -223,5 +242,7 @@ function fmt(iso?: string) {
     </Teleport>
 
     <ConfirmDialog v-model="confirmOpen" :title="t('schedules.confirmTitle')" :description="`${t('list.willDelete')} &quot;${toDelete?.name}&quot;.`" destructive :confirm-label="t('list.delete')" @confirm="doDelete" />
+
+    <ConfirmDialog v-model="bulkConfirmOpen" :title="t('schedules.confirmTitle')" :description="`${t('list.willDelete')} ${bulkRows.length} ${bulkRows.length === 1 ? 'programación' : 'programaciones'}.`" destructive :confirm-label="t('list.delete')" @confirm="doBulkDelete" />
   </div>
 </template>

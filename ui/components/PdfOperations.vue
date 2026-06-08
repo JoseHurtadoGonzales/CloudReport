@@ -335,15 +335,15 @@ const advancedOpenIdx = ref<number | null>(null)
               <td>
                 <!-- Mode badge -->
                 <template v-if="op.type === 'merge' || op.type === 'stampTemplate'">
-                  <span class="cr-pu-pill" style="background: rgb(205 255 173 / 0.40); color: var(--color-wise-800)">
+                  <span class="cr-pu-pill cr-pu-pill--stamp">
                     {{ op.renderForEveryPage || op.type === 'stampTemplate' ? 'stamp' : (op.mergeWholeDocument ? 'whole' : 'merge') }}
                   </span>
                 </template>
                 <template v-else-if="op.type === 'prepend' || op.type === 'prependTemplate'">
-                  <span class="cr-pu-pill" style="background: rgb(255 192 145 / 0.30); color: #974407">prepend</span>
+                  <span class="cr-pu-pill cr-pu-pill--prepend">prepend</span>
                 </template>
                 <template v-else-if="op.type === 'append' || op.type === 'appendTemplate'">
-                  <span class="cr-pu-pill" style="background: rgb(56 200 255 / 0.16); color: #0367a4">append</span>
+                  <span class="cr-pu-pill cr-pu-pill--append">append</span>
                 </template>
                 <template v-else>
                   <span class="text-[11px]" style="color: var(--cr-text-soft)">—</span>
@@ -794,12 +794,20 @@ html.dark .cr-pu-quick {
 .cr-pu-pill {
   display: inline-flex;
   align-items: center;
-  padding: 3px 8px;
+  padding: 3px 9px;
   border-radius: 9999px;
   font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  box-shadow: 0 1px 3px rgb(14 15 12 / 0.20);
 }
+/* Solid, opaque mode badges — the old translucent tints were nearly
+   invisible (especially "stamp" in dark mode). Each mode reads at a glance. */
+.cr-pu-pill--stamp   { background: #3f9e2b; }
+.cr-pu-pill--prepend { background: #e0701c; }
+.cr-pu-pill--append  { background: #0a8fc4; }
 
 .cr-pu-advanced-btn {
   display: inline-flex;

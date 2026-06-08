@@ -58,6 +58,22 @@ async function doRevoke() {
   } finally { toRevoke.value = null }
 }
 
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkRevoke(selected: any[]) { bulkRows.value = selected; bulkConfirmOpen.value = true }
+async function doBulkRevoke() {
+  let ok = 0
+  for (const row of bulkRows.value.slice()) {
+    try {
+      await api.delete(`/api/apikeys/${row._id}`)
+      keys.value = keys.value.filter(k => k._id !== row._id)
+      ok++
+    } catch (err: any) { toasts.error(t('settings.apiKeys.couldNotRevoke'), extractError(err)) }
+  }
+  bulkRows.value = []
+  if (ok > 0) toasts.success(t('settings.apiKeys.revoked'))
+}
+
 function isExpired(k: any) {
   return k.expiresAt && new Date(k.expiresAt).getTime() < Date.now()
 }
@@ -105,6 +121,9 @@ function statusOf(k: any): string {
       :empty-title="t('settings.apiKeys.empty')"
       :empty-description="t('settings.apiKeys.emptyDesc')"
       empty-icon="i-lucide-key-round"
+      selectable
+      :bulk-delete-label="t('settings.apiKeys.revoke')"
+      @bulk-delete="askBulkRevoke"
     >
       <template #cell-name="{ row }">
         <div class="font-semibold" style="color: var(--cr-text)">{{ row.name }}</div>
@@ -199,5 +218,7 @@ function statusOf(k: any): string {
     </Teleport>
 
     <ConfirmDialog v-model="confirmOpen" :title="t('settings.apiKeys.confirmTitle')" :description="`${t('settings.apiKeys.confirmDescPre')} &quot;${toRevoke?.name}&quot; ${t('settings.apiKeys.confirmDescPost')}`" destructive :confirm-label="t('settings.apiKeys.revoke')" @confirm="doRevoke" />
+
+    <ConfirmDialog v-model="bulkConfirmOpen" :title="t('settings.apiKeys.confirmTitle')" :description="`${t('list.willDelete')} ${bulkRows.length} API key${bulkRows.length === 1 ? '' : 's'}.`" destructive :confirm-label="t('settings.apiKeys.revoke')" @confirm="doBulkRevoke" />
   </div>
 </template>

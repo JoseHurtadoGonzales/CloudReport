@@ -91,6 +91,29 @@ async function doDelete() {
   }
 }
 
+// Bulk delete — admin only; never deletes the current user.
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkDelete(selected: any[]) {
+  bulkRows.value = selected.filter(r => r.shortid !== auth.user?.shortid)
+  if (bulkRows.value.length === 0) {
+    toasts.error(t('settings.users.cantDeleteSelf'))
+    return
+  }
+  bulkConfirmOpen.value = true
+}
+async function doBulkDelete() {
+  let ok = 0
+  for (const row of bulkRows.value.slice()) {
+    try {
+      await api.delete(`/api/admin/users/${row.shortid}`)
+      ok++
+    } catch (err: any) { toasts.error(t('common.couldNotDelete'), extractError(err)) }
+  }
+  bulkRows.value = []
+  if (ok > 0) { toasts.success(t('list.deleted')); await load() }
+}
+
 function fmt(iso?: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString()
@@ -140,6 +163,9 @@ function fmt(iso?: string) {
       ]"
       :rows="rows" :loading="loading"
       :empty-title="t('settings.users.empty')" empty-icon="i-lucide-users"
+      :selectable="isAdmin"
+      :bulk-delete-label="t('common.delete')"
+      @bulk-delete="askBulkDelete"
     >
       <template #cell-username="{ row }">
         <div class="flex items-center gap-3">
@@ -250,6 +276,15 @@ function fmt(iso?: string) {
       @confirm="doDelete"
       @cancel="confirmDelete = null"
       @update:model-value="(v: boolean) => { if (!v) confirmDelete = null }"
+    />
+
+    <ConfirmDialog
+      v-model="bulkConfirmOpen"
+      :title="t('settings.users.deleteTitle')"
+      :description="`${t('list.willDelete')} ${bulkRows.length} ${bulkRows.length === 1 ? 'usuario' : 'usuarios'}.`"
+      destructive
+      :confirm-label="t('common.delete')"
+      @confirm="doBulkDelete"
     />
   </div>
 </template>

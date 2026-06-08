@@ -71,6 +71,26 @@ async function doDelete() {
   }
 }
 
+const bulkRows = ref<any[]>([])
+const bulkConfirmOpen = ref(false)
+function askBulkDelete(selected: any[]) { bulkRows.value = selected; bulkConfirmOpen.value = true }
+async function doBulkDelete() {
+  let ok = 0
+  for (const row of bulkRows.value.slice()) {
+    try {
+      await templates.remove(row.shortid)
+      rows.value = rows.value.filter(r => r.shortid !== row.shortid)
+      if (previews.value[row.shortid]) {
+        URL.revokeObjectURL(previews.value[row.shortid])
+        delete previews.value[row.shortid]
+      }
+      ok++
+    } catch (err: any) { toasts.error(t('common.couldNotDelete'), extractError(err)) }
+  }
+  bulkRows.value = []
+  if (ok > 0) toasts.success(t('templatesList.deleted'))
+}
+
 async function renderQuick(row: any, e: Event) {
   e.preventDefault()
   e.stopPropagation()
@@ -232,7 +252,7 @@ function bgForName(name?: string): string {
 
           <!-- Recipe pill -->
           <div class="absolute top-3 left-3">
-            <RecipePill :recipe="row.recipe" />
+            <RecipePill :recipe="row.recipe" solid />
           </div>
 
           <!-- Hover overlay actions -->
@@ -280,7 +300,10 @@ function bgForName(name?: string): string {
         { key: 'actions', label: '', align: 'right', width: '120px' },
       ]"
       :rows="filtered"
+      selectable
+      :bulk-delete-label="t('templatesList.delete')"
       @row-click="(row) => router.push(`/templates/${row.shortid}`)"
+      @bulk-delete="askBulkDelete"
     >
       <template #cell-name="{ row }">
         <div class="flex items-center gap-3">
@@ -322,6 +345,15 @@ function bgForName(name?: string): string {
       destructive
       :confirm-label="t('templatesList.delete')"
       @confirm="doDelete"
+    />
+
+    <ConfirmDialog
+      v-model="bulkConfirmOpen"
+      :title="t('templatesList.confirmTitle')"
+      :description="`${t('templatesList.confirmDescPre')} ${bulkRows.length} ${bulkRows.length === 1 ? 'plantilla' : 'plantillas'}.`"
+      destructive
+      :confirm-label="t('templatesList.delete')"
+      @confirm="doBulkDelete"
     />
   </div>
 </template>
