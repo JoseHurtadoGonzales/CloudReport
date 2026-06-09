@@ -342,6 +342,23 @@ services:
       timeout: 5s
       retries: 10
 
+  # Dedicated Redis for USER WORKFLOWS (n8n Redis nodes). Separate from both the
+  # app queue (`redis`) and n8n's own Bull queue (`n8n-redis`) so flows can read
+  # and write freely without clobbering internal data. Internal-only (no host
+  # port published) and password-protected.
+  n8n-flows-redis:
+    image: redis:7-alpine
+    container_name: cr-n8n-flows-redis
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${N8N_FLOWS_REDIS_PASSWORD:-flowsredis}", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - n8n_flows_redis_storage:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${N8N_FLOWS_REDIS_PASSWORD:-flowsredis}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   # n8n main (UI + webhook handler). Reached at https://<host>:5678 via Caddy.
   # It is the ONLY instance that runs DB migrations — the workers wait for it
   # to become healthy first, avoiding the migration race that corrupts a fresh
@@ -391,4 +408,5 @@ volumes:
   n8n_storage:
   n8n_db_storage:
   n8n_redis_storage:
+  n8n_flows_redis_storage:
   seaweed_admin:
