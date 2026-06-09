@@ -174,7 +174,8 @@ Esto construye y arranca: Postgres, Redis, SeaweedFS (master/volume/filer/s3 + a
 | `N8N_WORKERS` | `2` | Réplicas de `n8n-worker` que consumen la cola. |
 | `N8N_ENCRYPTION_KEY` | *(requerido)* | Cifra credenciales de n8n. **Constante.** `openssl rand -hex 32`. |
 | `N8N_DB_NAME/USER/PASSWORD` | `n8n` | Postgres dedicado de n8n. |
-| `N8N_REDIS_PASSWORD` | *(requerido)* | Password del Redis dedicado de n8n. |
+| `N8N_REDIS_PASSWORD` | *(requerido)* | Password del Redis interno de n8n (cola Bull). |
+| `N8N_FLOWS_REDIS_PASSWORD` | *(requerido)* | Password del Redis dedicado a los flujos (`n8n-flows-redis`). |
 | `N8N_SECURE_COOKIE` | `false` | `true` solo con cert de confianza end-to-end. |
 
 > 🔑 Para una clave propia de las UIs de SeaweedFS (escapando los `$` para Compose):
@@ -260,6 +261,9 @@ n8n viene integrado para orquestar workflows (por ejemplo: disparar un render de
 - **`n8n`** — instancia principal: UI, editor y manejo de webhooks. Es la **única** que corre migraciones de la DB.
 - **`n8n-worker`** — flota de workers que ejecutan los workflows tomados de la cola Bull en Redis. Escalás con `N8N_WORKERS` (default 2).
 - **`n8n-postgres`** / **`n8n-redis`** — datastores dedicados con volúmenes propios.
+- **`n8n-flows-redis`** — Redis **dedicado a los flujos** (nodos Redis), separado de la cola interna para que los workflows lean/escriban sin pisar datos de n8n. Solo accesible dentro de Docker; password en `N8N_FLOWS_REDIS_PASSWORD`. Úsalo en la credencial Redis con host `n8n-flows-redis`.
+
+> ℹ️ Hay **tres Redis** independientes: `redis` (cola de la app), `n8n-redis` (cola Bull interna de n8n) y `n8n-flows-redis` (para tus workflows). No los mezcles.
 
 ```mermaid
 flowchart LR
