@@ -39,6 +39,12 @@ x-n8n-common: &n8n-common
     N8N_ENCRYPTION_KEY: "${N8N_ENCRYPTION_KEY:-change-me-n8n-encryption-key}"
   volumes:
     - n8n_storage:/home/node/.n8n
+    # Parche del bug DbClock de n8n 2.16.x: la rama Postgres de getDbTime() no
+    # envuelve el timestamp en `new Date()`, asi que el WaitTracker lanza
+    # "dbTime.getTime is not a function" cada 5s e inunda el log del main.
+    # El archivo montado es la version corregida (igual a la rama SQLite).
+    # Ligado a N8N_VERSION en .env; refrescar el archivo al subir de version.
+    - ./n8n-patches/clock.repository.js:/usr/local/lib/node_modules/n8n/node_modules/@n8n/db/dist/repositories/clock.repository.js:ro
   depends_on:
     n8n-postgres:
       condition: service_healthy
