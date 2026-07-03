@@ -58,6 +58,10 @@ type PreviewTab = 'output' | 'source' | 'logs' | 'profile'
 const previewTab = ref<PreviewTab>('output')
 
 const saving = ref(false)
+// True while the initial meta+template fetch is in flight. For NEW templates
+// there is no fetch, so it's flipped false immediately (see onMounted) and the
+// blank new-template form shows at once with no phantom skeleton.
+const loading = ref(true)
 const rendering = ref(false)
 const previewUrl = ref<string | null>(null)
 const previewBlob = ref<Blob | null>(null)
@@ -190,8 +194,15 @@ async function loadTemplate() {
 }
 
 onMounted(async () => {
-  await loadMeta()
-  await loadTemplate()
+  // New template: nothing to fetch for the form itself, so drop the skeleton
+  // immediately and let meta (engine/recipe lists) fill in behind the scenes.
+  if (isNew.value) loading.value = false
+  try {
+    // Independent fetches — run them concurrently to shorten the wait.
+    await Promise.all([loadMeta(), loadTemplate()])
+  } finally {
+    loading.value = false
+  }
 })
 
 async function save() {
@@ -558,12 +569,15 @@ function profileEvents() {
             <span style="color: var(--cr-text-muted)">{{ isNew ? 'nueva' : form.shortid }}</span>
           </div>
           <input
+            v-if="!loading"
             v-model="form.name"
             type="text"
             placeholder="Nombre de la plantilla"
             class="text-[22px] font-bold tracking-tight bg-transparent border-0 outline-none w-full"
             style="color: var(--cr-text)"
           />
+          <!-- Match the input's ~22px text-line box so the swap causes no shift. -->
+          <span v-else class="cr-skeleton block h-7 w-56 my-0.5" aria-hidden="true" />
           <div class="flex items-center gap-3 mt-1.5 text-[11.5px] flex-wrap" style="color: var(--cr-text-soft)">
             <Transition
               mode="out-in"
@@ -599,17 +613,21 @@ function profileEvents() {
       <div class="flex items-center gap-2 shrink-0">
         <div class="w-36">
           <CrSelect
+            v-if="!loading"
             v-model="form.engine"
             :options="engines.map(e => ({ value: e, label: e }))"
             placeholder="engine"
           />
+          <span v-else class="cr-skeleton block h-9 w-36" aria-hidden="true" />
         </div>
         <div class="w-40">
           <CrSelect
+            v-if="!loading"
             v-model="form.recipe"
             :options="recipes.map(r => ({ value: r, label: r }))"
             placeholder="recipe"
           />
+          <span v-else class="cr-skeleton block h-9 w-40" aria-hidden="true" />
         </div>
         <button
           type="button" class="cr-icon-btn !w-10 !h-10"
@@ -661,8 +679,11 @@ function profileEvents() {
           </div>
 
           <div class="flex-1 p-4 flex flex-col overflow-hidden">
+            <!-- While loading, one block fills the editor body so the default
+                 snippet ('<h1>Hola…') never flashes. Same flex-1 box → no shift. -->
+            <span v-if="loading" class="cr-skeleton flex-1 w-full" aria-hidden="true" />
             <CodeEditor
-              v-if="tab === 'content'"
+              v-else-if="tab === 'content'"
               v-model="form.content"
               :language="form.engine === 'handlebars' ? 'handlebars' : 'html'"
               height="100%"

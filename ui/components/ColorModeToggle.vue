@@ -11,7 +11,7 @@ const theme = useTheme()
     class="cr-icon-btn relative overflow-hidden"
     :aria-label="theme.mode.value === 'dark' ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro'"
     :title="theme.mode.value === 'dark' ? 'Tema claro' : 'Tema oscuro'"
-    @click="theme.toggle()"
+    @click="theme.toggle($event)"
   >
     <Transition
       enter-active-class="transition duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"

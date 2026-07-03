@@ -92,6 +92,22 @@ defineExpose({ clearSelection })
 // Total column count incl. the optional checkbox column (for empty/loading rows).
 const colCount = computed(() => props.columns.length + (props.selectable ? 1 : 0))
 
+// ── Skeleton loading ─────────────────────────────────────────────────
+// While `loading`, we render the real <thead> plus a body of skeleton rows so
+// the table appears at its full structure instantly and swaps to data with no
+// layout jump (replaces the old collapse-to-spinner behaviour).
+const skeletonRowCount = computed(() => Math.min(props.pageSize, 6))
+function isNameCol(c: Column) {
+  return c.key === 'name' || c.key === 'title'
+}
+// Width of the placeholder bar per column, so the skeleton reads like real data.
+function skelBarWidth(c: Column): string {
+  const k = c.key.toLowerCase()
+  if (k.includes('updated') || k.includes('date') || k.includes('created') || k.includes('run') || k.includes('time')) return '5.5rem'
+  if (k.includes('recipe') || k.includes('engine') || k.includes('state') || k.includes('status') || k.includes('scope')) return '4rem'
+  return '55%'
+}
+
 // ── Pagination ───────────────────────────────────────────────────────
 const pageSize = ref(props.pageSize)
 const currentPage = ref(1)
@@ -170,15 +186,8 @@ watch(() => props.rows.length, () => {
       <slot name="toolbar" />
     </div>
 
-    <div v-if="loading" class="p-8 text-center text-sm" style="color: var(--cr-text-muted)">
-      <span class="inline-flex items-center gap-2">
-        <span class="w-4 h-4 border-2 rounded-full cr-anim-spin" style="border-color: var(--color-wise-500); border-top-color: transparent" />
-        Cargando…
-      </span>
-    </div>
-
     <EmptyState
-      v-else-if="rows.length === 0"
+      v-if="!loading && rows.length === 0"
       :icon="emptyIcon"
       :title="emptyTitle"
       :description="emptyDescription"
@@ -214,7 +223,36 @@ watch(() => props.rows.length, () => {
             </th>
           </tr>
         </thead>
-        <tbody>
+        <!-- Skeleton rows while loading — same padding/borders as real rows so
+             heights match exactly and the swap to data causes no shift. -->
+        <tbody v-if="loading" aria-hidden="true">
+          <tr v-for="i in skeletonRowCount" :key="`sk-${i}`" class="cr-row">
+            <td v-if="selectable" class="px-4 py-3.5 align-middle w-px">
+              <span class="cr-skeleton" style="display:block;width:16px;height:16px;border-radius:4px" />
+            </td>
+            <td
+              v-for="c in columns"
+              :key="c.key"
+              :style="{ textAlign: c.align ?? 'left' }"
+              class="px-5 py-3.5 align-middle"
+            >
+              <span v-if="isNameCol(c)" class="inline-flex items-center gap-2.5 w-full">
+                <span class="cr-skeleton shrink-0" style="width:32px;height:32px;border-radius:9px" />
+                <span class="cr-skeleton" style="display:block;height:12px;width:55%;border-radius:6px" />
+              </span>
+              <span v-else-if="c.key === 'actions'" class="inline-flex items-center gap-1.5">
+                <span class="cr-skeleton" style="width:30px;height:30px;border-radius:8px" />
+                <span class="cr-skeleton" style="width:30px;height:30px;border-radius:8px" />
+              </span>
+              <span
+                v-else
+                class="cr-skeleton"
+                :style="{ display: 'inline-block', height: '12px', width: skelBarWidth(c), borderRadius: '6px' }"
+              />
+            </td>
+          </tr>
+        </tbody>
+        <tbody v-else>
           <tr
             v-for="(row, i) in pagedRows"
             :key="row._id ?? row.id ?? row.shortid ?? rowIndex(i)"
@@ -249,9 +287,19 @@ watch(() => props.rows.length, () => {
       </table>
     </div>
 
-    <!-- Pagination footer -->
+    <!-- Pagination footer — ghost placeholder while loading so it never pops in -->
+    <div v-if="paginate && loading" class="cr-pager" aria-hidden="true">
+      <div class="cr-pager-info">
+        <span class="cr-skeleton" style="display:inline-block;width:7rem;height:14px;border-radius:6px" />
+      </div>
+      <div class="cr-pager-nav">
+        <span class="cr-skeleton" style="width:30px;height:30px;border-radius:8px" />
+        <span class="cr-skeleton" style="width:30px;height:30px;border-radius:8px" />
+      </div>
+    </div>
+
     <div
-      v-if="paginate && !loading && rows.length > 0"
+      v-else-if="paginate && rows.length > 0"
       class="cr-pager"
     >
       <div class="cr-pager-info">

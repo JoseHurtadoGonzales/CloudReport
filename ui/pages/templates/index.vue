@@ -183,6 +183,14 @@ function bgForName(name?: string): string {
           :class="recipeFilter === '' ? 'cr-chip--active' : ''"
           @click="recipeFilter = ''"
         >{{ t('templatesList.filterAll') }}</button>
+        <template v-if="loading">
+          <span
+            v-for="i in 3"
+            :key="`chip-sk-${i}`"
+            class="cr-skeleton"
+            style="display:inline-block;width:5rem;height:1.75rem;border-radius:9999px"
+          />
+        </template>
         <button
           v-for="r in recipes"
           :key="r"
@@ -193,8 +201,8 @@ function bgForName(name?: string): string {
       </div>
     </div>
 
-    <!-- Loading skeleton -->
-    <div v-if="loading" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 cr-stagger">
+    <!-- Loading skeleton (grid view) -->
+    <div v-if="loading && view === 'grid'" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 cr-stagger">
       <div v-for="i in 6" :key="i" class="cr-card overflow-hidden">
         <div class="aspect-[16/10] cr-skeleton" />
         <div class="p-4 space-y-2.5">
@@ -203,6 +211,23 @@ function bgForName(name?: string): string {
         </div>
       </div>
     </div>
+
+    <!-- Loading skeleton (list view) — DataTable renders skeleton rows while
+         :loading. `selectable` MUST match the loaded table (line below) so the
+         checkbox column is reserved and columns don't shift right on load. -->
+    <DataTable
+      v-else-if="loading"
+      :columns="[
+        { key: 'name', label: t('templatesList.colName') },
+        { key: 'recipe', label: t('templatesList.colRecipe') },
+        { key: 'engine', label: t('templatesList.colEngine') },
+        { key: 'updated', label: t('templatesList.colUpdated') },
+        { key: 'actions', label: '', align: 'right', width: '120px' },
+      ]"
+      :rows="[]"
+      selectable
+      :loading="true"
+    />
 
     <!-- Empty state -->
     <EmptyState

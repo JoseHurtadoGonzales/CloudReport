@@ -15,6 +15,7 @@ const form = ref({
   isGlobal: false,
 })
 const saving = ref(false)
+const loaded = ref(isNew.value)
 
 onMounted(async () => {
   if (isNew.value) return
@@ -24,6 +25,7 @@ onMounted(async () => {
       shortid: s.shortid, name: s.name, content: s.content,
       scope: s.scope, isGlobal: !!s.isGlobal,
     }
+    loaded.value = true
   } catch (err: any) {
     toasts.error(t('common.couldNotLoad'), extractError(err))
     router.push('/scripts')
@@ -54,7 +56,8 @@ async function save() {
       <div class="flex items-center gap-3 min-w-0">
         <NuxtLink to="/scripts" class="cr-row-action !w-9 !h-9"><UIcon name="i-lucide-arrow-left" class="w-4 h-4" /></NuxtLink>
         <div class="min-w-0">
-          <input v-model="form.name" type="text" :placeholder="t('scripts.namePlaceholder')"
+          <span v-if="!loaded" class="cr-skeleton block h-6 w-48" />
+          <input v-else v-model="form.name" type="text" :placeholder="t('scripts.namePlaceholder')"
                  class="text-[20px] font-bold tracking-tight bg-transparent border-0 outline-none w-full" style="color: var(--cr-text)" />
           <div class="text-[11.5px] font-mono" style="color: var(--cr-text-soft)">{{ form.shortid || t('common.new') }}</div>
         </div>

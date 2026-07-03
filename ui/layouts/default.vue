@@ -5,13 +5,19 @@ import { useAuthStore } from '~/stores/auth'
 const auth = useAuthStore()
 const api = useApi()
 const route = useRoute()
-const sidebar = useSidebarState()
 const { t } = useI18n()
 
-const sidebarOpen = ref(false)  // mobile drawer
+// The panel is an OVERLAY toggled by a button (no hover): a slim rail is always
+// docked; pressing the toggle slides the full panel open ON TOP of the page
+// content (with a dimming scrim) — it never pushes the content aside. Closing
+// happens via the toggle, the scrim, Esc, or navigating.
+const open = ref(false)
 const userMenuOpen = ref(false)
 const userMenuRef = ref<HTMLElement | null>(null)
 const palette = ref<{ open: () => void } | null>(null)
+
+function toggleSidebar() { open.value = !open.value }
+function closeSidebar()  { open.value = false }
 
 onClickOutside(userMenuRef, () => (userMenuOpen.value = false))
 
@@ -52,7 +58,17 @@ const settingsNav = computed<{ id: string; key: string; to: string; icon: string
 ])
 
 // Pull live counts so we can render badges in the sidebar (e.g. running renders).
-async function refreshBadges() {
+// Throttled + non-overlapping: navigating used to fire these 3 OData calls on
+// EVERY route change, contending with the page's own data fetch and making
+// pages feel slow to enter. Now it refreshes at most once every few seconds
+// (and never while a refresh is already in flight); `force` bypasses the gate
+// for the initial mount.
+let badgesInFlight = false
+let lastBadgeRefresh = 0
+async function refreshBadges(force = false) {
+  const now = Date.now()
+  if (!force && (badgesInFlight || now - lastBadgeRefresh < 4000)) return
+  badgesInFlight = true
   try {
     const [tpls, schedules, profiles] = await Promise.all([
       api.get<{ '@odata.count': number }>('/odata/templates', { query: { $top: 0, $count: 'true' } }),
@@ -69,23 +85,32 @@ async function refreshBadges() {
     }
   } catch {
     // non-fatal
+  } finally {
+    badgesInFlight = false
+    lastBadgeRefresh = Date.now()
   }
 }
-onMounted(refreshBadges)
-// Refresh badges when route changes (after the user adds/runs something).
-watch(() => route.path, () => refreshBadges())
+onMounted(() => refreshBadges(true))
+// Refresh badges when route changes (after the user adds/runs something), and
+// tuck the panel away so a fresh page never opens under an overlay. The refresh
+// is throttled inside refreshBadges so rapid navigation doesn't hammer OData.
+watch(() => route.path, () => {
+  refreshBadges()
+  open.value = false
+})
 
 function isMac() {
   return typeof navigator !== 'undefined' && navigator.platform.toUpperCase().includes('MAC')
 }
 
-// Sidebar shortcut: Ctrl+B / Cmd+B
+// Sidebar shortcut: Ctrl+B / Cmd+B toggles the overlay; Esc closes it.
 function onKey(e: KeyboardEvent) {
   const ctrl = isMac() ? e.metaKey : e.ctrlKey
   if (ctrl && e.key.toLowerCase() === 'b') {
     e.preventDefault()
-    sidebar.toggle()
+    toggleSidebar()
   }
+  if (e.key === 'Escape') closeSidebar()
 }
 onMounted(() => window.addEventListener('keydown', onKey))
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
@@ -102,61 +127,71 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 </script>
 
 <template>
-  <div class="min-h-dvh flex" style="background: var(--cr-app-bg)">
-    <!-- Mobile overlay -->
+  <div class="min-h-dvh overflow-x-clip" style="background: var(--cr-app-bg)">
+    <!-- Scrim — dims the page behind the floating panel and closes on click. -->
     <Transition
-      enter-active-class="transition-opacity duration-200"
-      leave-active-class="transition-opacity duration-150"
+      enter-active-class="transition-opacity duration-200 ease-out"
+      leave-active-class="transition-opacity duration-150 ease-in"
       enter-from-class="opacity-0" leave-to-class="opacity-0"
     >
-      <div v-if="sidebarOpen" class="fixed inset-0 z-30 bg-black/40 lg:hidden" @click="sidebarOpen = false" />
+      <div v-if="open" class="cr-scrim" @click="closeSidebar" />
     </Transition>
 
-    <!-- Sidebar -->
+    <!-- Sidebar — a slim rail always docked; slides open OVER the content when
+         the toggle is pressed (no hover trigger). -->
     <aside
-      class="fixed lg:sticky inset-y-0 left-0 z-40 shrink-0 flex flex-col border-r overflow-visible"
+      class="cr-aside fixed inset-y-0 left-0 z-40 flex flex-col overflow-visible"
       :class="[
-        sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
-        sidebar.collapsed.value ? 'lg:w-[72px]' : 'lg:w-[252px]',
-        'w-[252px]',
+        open ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+        open ? 'lg:w-[264px]' : 'lg:w-[72px]',
+        open ? 'cr-aside--float' : '',
+        'w-[264px]',
       ]"
-      style="
-        background: var(--cr-surface);
-        border-color: var(--cr-border);
-        top: 0; height: 100dvh;
-        transition: width 280ms cubic-bezier(0.34, 1.20, 0.64, 1),
-                    transform 280ms cubic-bezier(0.23, 1, 0.32, 1);
-      "
     >
       <!-- Brand row -->
-      <div class="cr-side-brand" :class="sidebar.collapsed.value ? 'cr-side-brand--collapsed' : ''">
+      <div class="cr-side-brand">
         <NuxtLink to="/" class="cr-side-brand-link group">
-          <BrandLogo :size="36" />
-          <span v-if="!sidebar.collapsed.value" class="cr-side-brand-text">
-            <span class="cr-side-brand-name">cloud-report</span>
-            <span class="cr-side-brand-version">v1.0</span>
-          </span>
+          <span class="cr-side-brand-logo"><BrandLogo :size="36" /></span>
+          <Transition name="cr-fade">
+            <span v-if="open" class="cr-side-brand-text">
+              <span class="cr-side-brand-name">cloud-report</span>
+              <span class="cr-side-brand-version">v1.0</span>
+            </span>
+          </Transition>
         </NuxtLink>
+        <Transition name="cr-fade">
+          <button
+            v-if="open"
+            type="button"
+            class="cr-side-close"
+            :aria-label="t('sidebar.collapse')"
+            :title="`${t('sidebar.collapse')} (Esc)`"
+            @click="closeSidebar"
+          >
+            <UIcon name="i-lucide-panel-left-close" class="w-[18px] h-[18px]" />
+          </button>
+        </Transition>
       </div>
 
       <!-- Search button -->
-      <button
-        type="button"
-        class="cr-side-search"
-        :class="sidebar.collapsed.value ? 'cr-side-search--collapsed' : ''"
-        @click="openPalette"
-      >
-        <UIcon name="i-lucide-search" class="w-[18px] h-[18px] shrink-0" :style="!sidebar.collapsed.value ? 'color: var(--cr-text-soft)' : ''" />
-        <template v-if="!sidebar.collapsed.value">
-          <span class="flex-1 text-left">{{ t('nav.search') }}</span>
-          <kbd class="cr-side-kbd">{{ kbdCmd }}K</kbd>
-        </template>
+      <button type="button" class="cr-side-search" @click="openPalette">
+        <span class="cr-side-search-ico">
+          <UIcon name="i-lucide-search" class="w-[18px] h-[18px]" :style="open ? 'color: var(--cr-text-soft)' : ''" />
+        </span>
+        <Transition name="cr-fade">
+          <span v-if="open" class="cr-side-search-text">
+            <span class="flex-1 text-left">{{ t('nav.search') }}</span>
+            <kbd class="cr-side-kbd">{{ kbdCmd }}K</kbd>
+          </span>
+        </Transition>
       </button>
 
       <!-- Nav -->
       <nav class="cr-side-nav">
         <div class="cr-side-section">
-          <p v-if="!sidebar.collapsed.value" class="cr-side-section-title">{{ t('nav.workspace') }}</p>
+          <Transition name="cr-fade">
+            <p v-if="open" class="cr-side-section-title">{{ t('nav.workspace') }}</p>
+          </Transition>
           <ul class="space-y-0.5">
             <SidebarItem
               v-for="n in workspaceNav"
@@ -166,7 +201,7 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
               :icon="n.icon"
               :badge="n.badge"
               :badge-tone="n.id === 'profiles' ? 'amber' : 'lime'"
-              :collapsed="sidebar.collapsed.value"
+              :collapsed="!open"
             />
           </ul>
         </div>
@@ -174,7 +209,9 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
         <div class="cr-side-divider" />
 
         <div class="cr-side-section">
-          <p v-if="!sidebar.collapsed.value" class="cr-side-section-title">{{ t('nav.settings') }}</p>
+          <Transition name="cr-fade">
+            <p v-if="open" class="cr-side-section-title">{{ t('nav.settings') }}</p>
+          </Transition>
           <ul class="space-y-0.5">
             <SidebarItem
               v-for="n in settingsNav"
@@ -182,7 +219,7 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
               :to="n.to"
               :label="t(n.key)"
               :icon="n.icon"
-              :collapsed="sidebar.collapsed.value"
+              :collapsed="!open"
             />
           </ul>
         </div>
@@ -190,33 +227,40 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 
       <!-- Bottom: user card -->
       <div class="cr-side-bottom">
-        <div class="cr-side-user" :class="sidebar.collapsed.value ? 'cr-side-user--collapsed' : ''">
-          <span class="cr-side-avatar">
-            {{ auth.user?.username?.[0]?.toUpperCase() ?? 'U' }}
+        <div class="cr-side-user">
+          <span class="cr-side-avatar-zone">
+            <span class="cr-side-avatar">
+              {{ auth.user?.username?.[0]?.toUpperCase() ?? 'U' }}
+            </span>
           </span>
-          <div v-if="!sidebar.collapsed.value" class="flex-1 min-w-0">
-            <div class="text-[12.5px] font-semibold truncate" style="color: var(--cr-text)">
-              {{ auth.user?.username ?? '—' }}
+          <Transition name="cr-fade">
+            <div v-if="open" class="flex-1 min-w-0">
+              <div class="text-[12.5px] font-semibold truncate" style="color: var(--cr-text)">
+                {{ auth.user?.username ?? '—' }}
+              </div>
+              <div class="text-[10.5px] truncate" style="color: var(--cr-text-soft)">
+                {{ auth.user?.isAdmin ? t('user.admin') : t('user.user') }}
+              </div>
             </div>
-            <div class="text-[10.5px] truncate" style="color: var(--cr-text-soft)">
-              {{ auth.user?.isAdmin ? t('user.admin') : t('user.user') }}
-            </div>
-          </div>
-          <button
-            v-if="!sidebar.collapsed.value"
-            type="button"
-            class="cr-side-user-action"
-            :title="t('nav.logout')"
-            @click="onLogout"
-          >
-            <UIcon name="i-lucide-log-out" class="w-3.5 h-3.5" />
-          </button>
+          </Transition>
+          <Transition name="cr-fade">
+            <button
+              v-if="open"
+              type="button"
+              class="cr-side-user-action"
+              :title="t('nav.logout')"
+              @click="onLogout"
+            >
+              <UIcon name="i-lucide-log-out" class="w-3.5 h-3.5" />
+            </button>
+          </Transition>
         </div>
       </div>
     </aside>
 
-    <!-- Main column -->
-    <div class="flex-1 min-w-0 flex flex-col">
+    <!-- Main column — always reserves just the slim rail (72px). The panel
+         floats on top when open, so this content never shifts. -->
+    <div class="cr-main min-w-0 flex flex-col lg:pl-[72px]">
       <!-- Topbar -->
       <header
         class="sticky top-0 z-20 h-16 px-4 sm:px-6 flex items-center gap-3 border-b backdrop-blur"
@@ -225,20 +269,21 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
         <button
           type="button"
           class="lg:hidden cr-icon-btn !w-10 !h-10"
-          aria-label="Abrir menú"
-          @click="sidebarOpen = true"
+          :aria-label="t('sidebar.expand')"
+          @click="toggleSidebar"
         >
           <UIcon name="i-lucide-menu" class="w-5 h-5" />
         </button>
 
-        <!-- Desktop sidebar toggle — replaces the in-sidebar collapse buttons -->
+        <!-- Desktop toggle — slides the overlay panel open / closed -->
         <button
           type="button"
           class="hidden lg:inline-flex cr-topbar-toggle"
-          :class="sidebar.collapsed.value ? 'cr-topbar-toggle--collapsed' : ''"
-          :aria-label="sidebar.collapsed.value ? t('sidebar.expand') : t('sidebar.collapse')"
-          :title="`${sidebar.collapsed.value ? t('sidebar.expand') : t('sidebar.collapse')} (${kbdCmd}+B)`"
-          @click="sidebar.toggle()"
+          :class="open ? '' : 'cr-topbar-toggle--collapsed'"
+          :aria-label="open ? t('sidebar.collapse') : t('sidebar.expand')"
+          :aria-pressed="open"
+          :title="`${open ? t('sidebar.collapse') : t('sidebar.expand')} (${kbdCmd}+B)`"
+          @click="toggleSidebar"
         >
           <Transition
             mode="out-in"
@@ -248,15 +293,15 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
             leave-to-class="opacity-0 scale-75 rotate-12"
           >
             <UIcon
-              v-if="sidebar.collapsed.value"
-              key="open"
-              name="i-lucide-panel-left-open"
+              v-if="open"
+              key="close"
+              name="i-lucide-panel-left-close"
               class="w-[18px] h-[18px]"
             />
             <UIcon
               v-else
-              key="close"
-              name="i-lucide-panel-left-close"
+              key="open"
+              name="i-lucide-panel-left-open"
               class="w-[18px] h-[18px]"
             />
           </Transition>
@@ -327,6 +372,109 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 </template>
 
 <style>
+/* ─── Overlay shell ──────────────────────────────────────────────────────── */
+/* The panel is a slim docked rail that floats open on top of the content.
+   Width + elevation animate with spring-flavoured easing; content never moves. */
+.cr-aside {
+  top: 0;
+  height: 100dvh;
+  background: var(--cr-surface);
+  border-right: 1px solid var(--cr-border);
+  will-change: width, transform;
+  transition:
+    width 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 320ms cubic-bezier(0.23, 1, 0.32, 1),
+    box-shadow 260ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 260ms ease,
+    border-radius 260ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+/* Floating (peeked / pinned / mobile-open): lift off the edge with a soft
+   shadow + hairline ring and round the right corners. */
+.cr-aside--float {
+  border-right-color: transparent;
+  border-top-right-radius: 18px;
+  border-bottom-right-radius: 18px;
+  box-shadow:
+    0 24px 60px -12px rgb(14 15 12 / 0.28),
+    0 8px 20px -8px rgb(14 15 12 / 0.16),
+    0 0 0 1px var(--cr-border);
+}
+html.dark .cr-aside--float {
+  box-shadow:
+    0 24px 60px -12px rgb(0 0 0 / 0.60),
+    0 8px 20px -8px rgb(0 0 0 / 0.45),
+    0 0 0 1px var(--cr-border-strong);
+}
+
+/* Scrim behind the open overlay panel — click anywhere to close. */
+.cr-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgb(14 15 12 / 0.38);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  cursor: pointer;
+}
+html.dark .cr-scrim { background: rgb(0 0 0 / 0.58); }
+
+/* Close (✕) button in the panel header, shown only while open. */
+.cr-side-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--cr-text-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    border-color 140ms cubic-bezier(0.23, 1, 0.32, 1),
+    transform 100ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.cr-side-close:hover {
+  background: var(--cr-surface-soft);
+  border-color: var(--cr-border);
+  color: var(--cr-text);
+}
+.cr-side-close:active { transform: scale(0.92); }
+
+/* Generic fade+slide for labels revealed as the panel widens. */
+.cr-fade-enter-active {
+  transition: opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
+              transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition-delay: 40ms;
+}
+.cr-fade-leave-active {
+  transition: opacity 100ms ease-in, transform 100ms ease-in;
+}
+.cr-fade-enter-from { opacity: 0; transform: translateX(-6px); }
+.cr-fade-leave-to   { opacity: 0; transform: translateX(-4px); }
+
+/* Search label wrapper (kept as one node so it can fade as a unit). */
+.cr-side-search-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding-right: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Honour reduced-motion: keep the state change, drop the travel. */
+@media (prefers-reduced-motion: reduce) {
+  .cr-aside { transition-duration: 1ms; }
+  .cr-fade-enter-active,
+  .cr-fade-leave-active { transition-duration: 1ms; transition-delay: 0ms; }
+}
+
 /* ─── Brand ──────────────────────────────────────────────────────────────── */
 .cr-side-brand {
   height: 64px;
@@ -337,19 +485,19 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
   border-bottom: 1px solid var(--cr-border);
   flex-shrink: 0;
 }
-.cr-side-brand--collapsed {
-  padding: 0;
-  justify-content: center;
-}
 .cr-side-brand-link {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 0;
   flex: 1;
   min-width: 0;
 }
-.cr-side-brand--collapsed .cr-side-brand-link {
-  flex: 0;
+/* Logo sits in the same fixed 44px zone as every icon → it never moves and
+   never gets clipped, rail or expanded. */
+.cr-side-brand-logo {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
   justify-content: center;
 }
 .cr-side-brand-text {
@@ -425,9 +573,10 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 .cr-side-search {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 12px 12px 8px;
-  padding: 9px 12px;
+  gap: 0;
+  height: 40px;
+  margin: 12px 14px 8px;
+  padding: 0;
   border-radius: 10px;
   background: var(--cr-surface-soft);
   color: var(--cr-text-muted);
@@ -446,13 +595,12 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
   color: var(--cr-text);
 }
 .cr-side-search:active { transform: scale(0.98); }
-.cr-side-search--collapsed {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  margin: 12px auto 8px;
+/* Fixed 44px icon zone — matches nav icons, so the magnifier never moves. */
+.cr-side-search-ico {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  border-radius: 10px;
 }
 
 .cr-side-kbd {
@@ -472,8 +620,11 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 .cr-side-nav {
   flex: 1;
   overflow-y: auto;
-  overflow-x: visible;             /* let the active rail extend past the items */
-  padding: 4px 12px 12px;
+  /* `clip` (not `visible`) so a label mid-transition can never spawn a phantom
+     horizontal scrollbar; the margin still lets the active rail bleed left. */
+  overflow-x: clip;
+  overflow-clip-margin: 16px;
+  padding: 4px 14px 12px;
   scrollbar-width: thin;
 }
 .cr-side-section { }
@@ -499,7 +650,7 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 
 /* ─── Bottom area ───────────────────────────────────────────────────────── */
 .cr-side-bottom {
-  padding: 10px 12px 14px;
+  padding: 10px 14px 14px;
   border-top: 1px solid var(--cr-border);
   flex-shrink: 0;
 }
@@ -507,17 +658,20 @@ const kbdCmd = computed(() => (isMac() ? '⌘' : 'Ctrl'))
 .cr-side-user {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 0;
+  padding: 8px 0;
   border-radius: 12px;
   transition: background-color 140ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .cr-side-user:hover {
   background: var(--cr-surface-soft);
 }
-.cr-side-user--collapsed {
+/* Avatar in the same fixed 44px zone → aligned with every icon, never moves. */
+.cr-side-avatar-zone {
+  flex: 0 0 44px;
+  display: flex;
+  align-items: center;
   justify-content: center;
-  padding: 8px 0;
 }
 .cr-side-avatar {
   width: 32px;

@@ -153,6 +153,9 @@ async function quickRender() {
 
 <template>
   <div class="cr-anim-fade-up">
+    <!-- Header (hero vs PageHeader) is data-conditional, so we do NOT reserve a
+         skeleton for it — a guessed placeholder would collapse/grow on the
+         empty-workspace path. It simply fades in with the page. -->
     <!-- Welcome hero (only when there's nothing yet) -->
     <section v-if="isEmpty && !loading" class="cr-card overflow-hidden mb-6 relative">
       <!-- Animated backdrop -->
@@ -266,6 +269,11 @@ async function quickRender() {
       </NuxtLink>
     </div>
 
+    <!-- The success-rate and quick-render cards are data-conditional (shown only
+         when there are profiles / templates), so they are NOT reserved with a
+         loading placeholder — that would collapse on an empty workspace. They
+         fade in after load. The stat tiles and the two-column lists below ARE
+         unconditional, so they keep their exact-match skeletons. -->
     <!-- Success-rate bar + recent renders summary -->
     <section v-if="!loading && successRate !== null" class="cr-card p-5 mt-6">
       <div class="flex flex-wrap items-center gap-5">

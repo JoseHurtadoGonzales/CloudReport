@@ -50,7 +50,12 @@ export default defineNuxtConfig({
         },
       ],
     },
-    pageTransition: { name: 'page', mode: 'out-in' },
+    // No page transition: `out-in` forced the old page to animate OUT before
+    // the new one mounted, adding dead-time on every click. With it off, the
+    // new page (and its skeleton) mounts INSTANTLY; the per-page
+    // `.cr-anim-fade-up` gives a single quick entrance fade.
+    pageTransition: false,
+    layoutTransition: false,
   },
 
   runtimeConfig: {

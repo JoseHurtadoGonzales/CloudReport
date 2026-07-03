@@ -13,6 +13,7 @@ const form = ref({
   dataJson: '{\n  "title": "Mi reporte",\n  "items": []\n}',
 })
 const saving = ref(false)
+const loaded = ref(isNew.value)
 
 const isValid = computed(() => {
   try { JSON.parse(form.value.dataJson); return true } catch { return false }
@@ -25,6 +26,7 @@ onMounted(async () => {
     let raw = d.dataJson
     if (typeof raw === 'object') raw = JSON.stringify(raw, null, 2)
     form.value = { shortid: d.shortid, name: d.name, dataJson: raw ?? '{}' }
+    loaded.value = true
   } catch (err: any) {
     toasts.error(t('common.couldNotLoad'), extractError(err))
     router.push('/data')
@@ -55,7 +57,8 @@ async function save() {
       <div class="flex items-center gap-3 min-w-0">
         <NuxtLink to="/data" class="cr-row-action !w-9 !h-9"><UIcon name="i-lucide-arrow-left" class="w-4 h-4" /></NuxtLink>
         <div class="min-w-0">
-          <input v-model="form.name" type="text" :placeholder="t('data.namePlaceholder')"
+          <span v-if="!loaded" class="cr-skeleton block h-6 w-48" />
+          <input v-else v-model="form.name" type="text" :placeholder="t('data.namePlaceholder')"
                  class="text-[20px] font-bold tracking-tight bg-transparent border-0 outline-none w-full" style="color: var(--cr-text)" />
           <div class="text-[11.5px] font-mono" style="color: var(--cr-text-soft)">{{ form.shortid || t('common.new') }}</div>
         </div>

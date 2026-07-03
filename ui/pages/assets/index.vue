@@ -157,8 +157,26 @@ function assetUrl(row: any) {
       <input v-model="search" type="text" :placeholder="t('assets.searchPlaceholder')" class="cr-input !pl-10 !py-2 !text-[13px]" style="padding-top: 8px; padding-bottom: 8px" />
     </div>
 
+    <!-- Loading skeleton -->
+    <div v-if="loading" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      <div v-for="i in 10" :key="i" class="cr-card overflow-hidden">
+        <div class="aspect-square cr-skeleton" />
+        <div class="p-3 flex flex-col gap-1">
+          <div class="h-3 w-3/4 cr-skeleton rounded" />
+          <div class="flex items-center justify-between">
+            <div class="h-2.5 w-1/4 cr-skeleton rounded" />
+            <div class="h-2.5 w-1/3 cr-skeleton rounded" />
+          </div>
+          <div class="flex items-center gap-1 mt-2">
+            <div class="flex-1 h-7 cr-skeleton rounded" />
+            <div class="flex-1 h-7 cr-skeleton rounded" />
+          </div>
+        </div>
+      </div>
+    </div>
+
     <EmptyState
-      v-if="!loading && filtered.length === 0"
+      v-else-if="filtered.length === 0"
       icon="i-lucide-image"
       :title="t('assets.empty')"
       :description="t('assets.emptyDesc')"

@@ -14,12 +14,14 @@ const form = ref({
   helpers: '',
 })
 const saving = ref(false)
+const loaded = ref(isNew.value)
 
 onMounted(async () => {
   if (isNew.value) return
   try {
     const c = await entity.get(route.params.shortid as string)
     form.value = { shortid: c.shortid, name: c.name, content: c.content, engine: c.engine, helpers: c.helpers ?? '' }
+    loaded.value = true
   } catch (err: any) {
     toasts.error(t('common.couldNotLoad'), extractError(err))
     router.push('/components')
@@ -49,7 +51,8 @@ async function save() {
       <div class="flex items-center gap-3 min-w-0">
         <NuxtLink to="/components" class="cr-row-action !w-9 !h-9"><UIcon name="i-lucide-arrow-left" class="w-4 h-4" /></NuxtLink>
         <div class="min-w-0">
-          <input v-model="form.name" type="text" :placeholder="t('components.namePlaceholder')"
+          <span v-if="!loaded" class="cr-skeleton block h-6 w-48" />
+          <input v-else v-model="form.name" type="text" :placeholder="t('components.namePlaceholder')"
                  class="text-[20px] font-bold tracking-tight bg-transparent border-0 outline-none w-full" style="color: var(--cr-text)" />
           <div class="text-[11.5px] font-mono" style="color: var(--cr-text-soft)">
             {{ form.shortid || t('common.new') }} — {{ t('components.invokeWith') }} <code>&#123;&#123;&gt; {{ form.name }}&#125;&#125;</code>

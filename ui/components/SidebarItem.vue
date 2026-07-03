@@ -117,7 +117,7 @@ const badgeStyle = computed(() => {
     <NuxtLink
       :to="to"
       class="cr-side-item"
-      :class="[active ? 'cr-side-item--active' : '', collapsed ? 'cr-side-item--collapsed' : '']"
+      :class="active ? 'cr-side-item--active' : ''"
       @mouseenter="showTooltip"
       @mouseleave="hideTooltip"
       @focus="showTooltip"
@@ -127,15 +127,19 @@ const badgeStyle = computed(() => {
       <span class="cr-side-ico-wrap">
         <UIcon :name="icon" class="cr-side-ico" />
       </span>
-      <span v-if="!collapsed" class="cr-side-label whitespace-nowrap">{{ label }}</span>
+      <Transition name="cr-fade">
+        <span v-if="!collapsed" class="cr-side-label whitespace-nowrap">{{ label }}</span>
+      </Transition>
 
-      <span
-        v-if="badge != null && badge !== '' && badge !== 0 && !collapsed"
-        class="cr-side-badge"
-        :style="badgeStyle"
-      >
-        {{ badge }}
-      </span>
+      <Transition name="cr-fade">
+        <span
+          v-if="badge != null && badge !== '' && badge !== 0 && !collapsed"
+          class="cr-side-badge"
+          :style="badgeStyle"
+        >
+          {{ badge }}
+        </span>
+      </Transition>
 
       <span
         v-if="badge != null && badge !== '' && badge !== 0 && collapsed"
@@ -180,8 +184,9 @@ const badgeStyle = computed(() => {
 .cr-side-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 9px 10px;
+  gap: 0;                    /* icon lives in a fixed 44px zone; label pads itself */
+  height: 40px;
+  padding: 0;
   border-radius: 10px;
   font-size: 13px;
   font-weight: 500;
@@ -217,26 +222,28 @@ html.dark .cr-side-item--active {
   background: rgb(159 232 112 / 0.14);
   color: var(--color-wise-300);
 }
-.cr-side-item--collapsed.cr-side-item--active {
-  box-shadow: inset 0 0 0 1px rgb(159 232 112 / 0.35);
-}
-html.dark .cr-side-item--collapsed.cr-side-item--active {
-  box-shadow: inset 0 0 0 1px rgb(159 232 112 / 0.28);
-}
 
+/* The icon zone is a FIXED 44px box anchored at the item's left edge, identical
+   whether the panel is a rail or expanded — so icons never move or shift. */
 .cr-side-ico-wrap {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 100%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
   transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 .cr-side-item:hover .cr-side-ico-wrap { transform: scale(1.10); }
 .cr-side-ico { width: 18px; height: 18px; }
 
-.cr-side-label { flex: 1; min-width: 0; }
+.cr-side-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  padding-right: 12px;
+}
 
 .cr-side-badge {
   display: inline-flex;
@@ -260,17 +267,6 @@ html.dark .cr-side-item--collapsed.cr-side-item--active {
   height: 6px;
   border-radius: 9999px;
 }
-
-.cr-side-item--collapsed {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  margin: 0 auto;
-  justify-content: center;
-  border-radius: 10px;
-}
-.cr-side-item--collapsed .cr-side-rail { left: -8px; }
-.cr-side-item--collapsed .cr-side-ico-wrap { width: 100%; height: 100%; }
 
 /* ─────────────────────────────────────────────────────────────────────
    Tooltip (Teleported to <body>, position: fixed → never clipped)
