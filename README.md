@@ -39,6 +39,7 @@ Plataforma de generación de reportes: **Go API** + **Nuxt UI** + **workers Pyth
 
 - 🧾 **Plantillas Handlebars** → render a **PDF (Chromium / WeasyPrint)**, **DOCX**, **XLSX**, **PPTX**, **HTML**.
 - ✏️ **Editor visual** con resaltado de sintaxis, preview en vivo, tabs de Contenido / Estilos / Helpers / Data / Scripts / Recipe / Página / PDF ops.
+- ⚡ **UI fluida**: navegación **instantánea** entre páginas + **skeletons** de carga (sin saltos de layout) y **tema claro/oscuro con transición animada** (revelado circular vía View Transitions API).
 - 🖼️ **Assets** (CSS, imágenes, fuentes) inlineables con `{#asset nombre}` — sin servidor de archivos externo.
 - 🧷 **Operaciones PDF**: concatenar (`append`/`prepend`), estampar headers/footers en cada página (`merge` + `renderForEveryPage`).
 - ⏳ **Retención por plantilla**: cada template define cuántos días se guardan sus reportes; un sweeper los borra solos.
@@ -113,8 +114,8 @@ El **navegador solo habla con Caddy** (HTTPS). El frontend usa rutas relativas (
 ### 2. Clonar y configurar
 
 ```bash
-git clone https://github.com/JoseHurtadoGonzales/CloudReport.git
-cd CloudReport
+git clone https://github.com/cloudfactorybo/Cloud-Report.git
+cd Cloud-Report
 
 # Copiá la plantilla de entorno y editala
 cp .env.example .env
